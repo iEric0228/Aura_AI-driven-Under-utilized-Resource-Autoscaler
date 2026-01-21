@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateLaunchTemplate",
+        "ec2:CreateFleet",
+        "ec2:RunInstances",
+        "ec2:CreateTags",
+        "ec2:TerminateInstances",
+        "ec2:Describe*",
+        "ec2:DeleteLaunchTemplate",
+        "ec2:DescribeLaunchTemplates",
+        "ec2:DescribeLaunchTemplateVersions",
+        "iam:PassRole",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "eks:DescribeCluster"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
