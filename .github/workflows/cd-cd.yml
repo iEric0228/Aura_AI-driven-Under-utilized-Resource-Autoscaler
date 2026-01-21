@@ -45,16 +45,24 @@ jobs:
 
       - name: Terraform Init
         if: ${{ github.event.inputs.action != 'destroy' }}
+        working-directory: ./terraform/environments/dev
         run: terraform init
+
+      - name: Terraform Plan 
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        working-directory: ./terraform/environments/dev
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply 
         if: ${{ github.event.inputs.action != 'destroy' }}
+        working-directory: ./terraform/environments/dev
         run: terraform apply -auto-approve
         continue-on-error: false
 
       - name: Get Terraform Outputs
         if: ${{ github.event.inputs.action != 'destroy' }}
         id: tfoutputs
+        working-directory: ./terraform/environments/dev
         run: terraform output -json > tf-outputs.json
         continue-on-error: false
 
@@ -97,6 +105,7 @@ jobs:
 
       - name: Terraform Destroy 
         if: ${{ github.event.inputs.action != 'deploy' }}
+        working-directory: ./terraform/environments/dev
         run: terraform destroy -auto-approve
         continue-on-error: false
 
