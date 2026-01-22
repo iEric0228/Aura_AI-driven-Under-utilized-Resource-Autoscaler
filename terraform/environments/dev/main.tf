@@ -8,9 +8,11 @@ data "aws_iam_policy_document" "eks_assume_role_policy" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
 module "vpc" {
   source             = "../../modules/VPC"
-  name               = "auradev"
+  name               = "aura-eks-dev"
   cidr_block         = "10.0.0.0/16"
   public_subnets     = ["10.0.1.0/24", "10.0.2.0/24"]
   private_subnets    = ["10.0.3.0/24", "10.0.4.0/24"]
@@ -29,7 +31,10 @@ module "eks" {
   source                  = "../../modules/EKS"
   cluster_name            = "aura-eks-dev"
   cluster_role_arn        = module.iam_eks.cluster_role_arn
+  cluster_role_name       = "aura-eks-cluster-role"
   node_role_arn           = module.iam_eks.node_role_arn
+  node_role_name          = "aura-eks-node-role"
+  admin_principal_arn     = data.aws_caller_identity.current.arn
   subnet_ids              = module.vpc.private_subnet_ids
   node_group_desired_size = 1
   node_group_min_size     = 1
@@ -56,15 +61,9 @@ data "local_file" "karpenter_controller_policy" {
 }
 
 module "iam" {
-  source                          = "../../modules/IAM"
-  role_name                       = "aura-karpenter-controller-role"
-  assume_role_policy              = data.aws_iam_policy_document.eks_assume_role_policy.json
-  karpenter_controller_role_name  = "aura-karpenter-controller-role"
-  oidc_provider_arn               = aws_iam_openid_connect_provider.this.arn
-  oidc_provider_url               = aws_iam_openid_connect_provider.this.url
+  source                           = "../../modules/IAM"
+  karpenter_controller_role_name   = "aura-karpenter-controller-role"
+  oidc_provider_arn                = aws_iam_openid_connect_provider.this.arn
+  oidc_provider_url                = aws_iam_openid_connect_provider.this.url
   karpenter_controller_policy_json = data.local_file.karpenter_controller_policy.content
-}
-
-output "karpenter_controller_policy_arn" {
-  value = module.iam.karpenter_controller_policy_arn
 }

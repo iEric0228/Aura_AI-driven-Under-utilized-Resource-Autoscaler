@@ -1,0 +1,37 @@
+{
+  "cluster_certificate_authority_data": {
+    "sensitive": false,
+    "type": "string",
+    "value": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCVENDQWUyZ0F3SUJBZ0lJTHROdzMwQ0hoTzh3RFFZSktvWklodmNOQVFFTEJRQXdGVEVUTUJFR0ExVUUKQXhNS2EzVmlaWEp1WlhSbGN6QWVGdzB5TmpBeE1qRXhOalEwTXpOYUZ3MHpOakF4TVRreE5qUTVNek5hTUJVeApFekFSQmdOVkJBTVRDbXQxWW1WeWJtVjBaWE13Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBQTRJQkR3QXdnZ0VLCkFvSUJBUUM3U1hxY0E5Yzd0cThKVkFtWk9NeU1BZ1FjMEN6MlgyV0hsY2FBbnNUVS9iSkJWZzN3MTRKSWpISk8KTVg3Y0hsMkZ6NWR6QzE2a0FZV0lQa1plTzdkYU9PUXZDekxGWU9PMFpXZEZIRmd3aVo1WURBbzlRSUYxRHZqbQpmajZSSGhUeGZRYkF1cTZGMDBndDBEN2JkV3dULzZkSm1EMjVLWW1qMlYxQ0tudzdKeUQ0UGQvSlJ5bWpSVWdHCjdkZkdsc1pYTHlxQW5kL2hydWFpZkdCTkxoZVhhRElCVEhsMStlNGVrcTNwQS9Ibm9Fb3AyYnpWNG9uSmZ2YU4KOWFQSHErZlBSNk41cHYwaW5zNklnbVdBcEVERWZFd3NHcitXQ2Fmd0ZXMXowbnpwN3J3cXlPN3IvYjNYSk42eApDT0Z5ZVdaMEtRV3Uvc3F1L3hyVjBYMVk1d2xwQWdNQkFBR2pXVEJYTUE0R0ExVWREd0VCL3dRRUF3SUNwREFQCkJnTlZIUk1CQWY4RUJUQURBUUgvTUIwR0ExVWREZ1FXQkJSam1YSHNUdmtXQ3JuVFZnWEFDblJKMDFQdmNEQVYKQmdOVkhSRUVEakFNZ2dwcmRXSmxjbTVsZEdWek1BMEdDU3FHU0liM0RRRUJDd1VBQTRJQkFRQjJRNzE0alVZQQpZS1pxaUtjVFhUbDdXUStaVTdtQ1FSb3VrUm9jRWloZzZkcE5ReFB0SlB4eXhjaTRBdW9HUGI0eWdsNjMwVG5CClovcUUvUHQrSmd5L1BpVnhiT1gzV1I2N3VFckFEVjkyTTZjNlFGTUhwY1lSZ0F5ckVvZ0pBeStJUVU0RFVxQlEKN1hxdW0rSkQ2ZmtQczlEcGJiR2dXWUxMazVaNkpjWmQ0SWcwSWlhUkVTbmxlTmVNSFJhd2dqU2NJbk5FaTFTTwpyWTFndTFoZmhHQVdPSWpnanZ4MUcvZnNkTnBsUmQ2N1VEZEhkbFFhUVRxN1ZVNVUxT1lJRm1qaGFKMU5wUzVTCkxqUFFhZzZUcVN0YTFXT3Y5L0VKaTN6VWxBWUl2YWF5cXVMTTVLbUtlU1lpaGQ3dG5jZE9kd3hucklhZVRCREcKUmtwVW5TWjI5TVlFCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K"
+  },
+  "cluster_endpoint": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://939225FD9D56B6D96CC29C51720501C3.gr7.us-east-1.eks.amazonaws.com"
+  },
+  "cluster_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "aura-eks-dev"
+  },
+  "cluster_oidc_issuer_url": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://oidc.eks.us-east-1.amazonaws.com/id/939225FD9D56B6D96CC29C51720501C3"
+  },
+  "karpenter_controller_policy_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:iam::125156866057:policy/aura-karpenter-controller-role-policy"
+  },
+  "karpenter_controller_role_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:iam::125156866057:role/aura-karpenter-controller-role"
+  },
+  "node_instance_profile_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "aura-eks-node-role-instance-profile"
+  }
+}
