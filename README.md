@@ -20,43 +20,87 @@ AI-Ops Infrastructure on AWS EKS
 
 ---
 
-## 2. Core Architecture
+## 2. Architecture Overview
 
-- **Layered Modular IaC:** Each AWS resource (VPC, EKS, IAM, IAM_EKS) is a separate Terraform module
-- **Root Environment:** `/terraform/environments/dev/` wires modules together
-- **CI/CD Orchestration:** `.github/workflow/cd-cd.yml` automates deploy/test/destroy
+### Modular Infrastructure-as-Code with CI/CD Orchestration
 
 ```
-Karpenter/         # Karpenter CRDs and job manifests
-terraform/
-  environments/
-    dev/           # Root config, outputs for CI/CD
-  modules/
-    VPC/           # VPC resources
-    EKS/           # EKS cluster, node group, outputs
-    IAM/           # Karpenter controller IAM role
-    IAM_EKS/       # EKS cluster/node IAM roles
-.github/
-  workflow/        # CI/CD pipeline
+┌─────────────────────────────────────────────────────────────┐
+│                    CI/CD Layer (GitHub Actions)             │
+│  Orchestrates: Deploy → Run → Collect → Destroy             │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Infrastructure Layer (Terraform)               │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐     │
+│  │   VPC    │→ │   EKS    │→ │   IAM    │→ │  OIDC   │      │
+│  │  Module  │  │  Module  │  │  Module  │  │ Provider│      │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│            Kubernetes Layer (EKS + Karpenter)               │
+│  ┌──────────────┐         ┌──────────────┐                  │
+│  │   EKS        │         │  Karpenter   │                  │
+│  │  Cluster     │◄────────│  Controller │                   │
+│  └──────────────┘         └──────────────┘                  │
+│       │                          │                          │
+│       └──────────┬───────────────┘                          │
+│                  ▼                                          │
+│         ┌─────────────────┐                                 │
+│         │  EC2 Nodes       │                                │
+│         │  (Auto-provision)│                                │
+│         └─────────────────┘                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Directory Structure
+
+```
+Aura_AI-driven-Under-utilized-Resource-Autoscaler/
+├── terraform/
+│   ├── environments/
+│   │   └── dev/                    # Root module (orchestrates all modules)
+│   │       ├── main.tf             # Module composition & wiring
+│   │       ├── outputs.tf          # Exports values for CI/CD
+│   │       ├── get-oidc-thumbprint.py  # Helper script
+│   │       └── karpenter-controller-policy.json  # IAM policy
+│   └── modules/                    # Reusable Terraform modules
+│       ├── VPC/                    # Networking infrastructure
+│       ├── EKS/                    # Kubernetes cluster
+│       ├── IAM/                    # Karpenter IAM roles
+│       └── IAM_EKS/                # EKS cluster/node IAM roles
+├── Karpenter/
+│   ├── main.yml                    # Karpenter Provisioner CRD
+│   ├── app-job.yml                 # Example Kubernetes Job
+│   └── gpu-test-job.yml            # GPU test job for autoscaling validation
+├── .github/
+│   └── workflows/
+│       └── cd-cd.yml               # CI/CD pipeline
+└── env.example                     # Environment variables template
 ```
 
 ---
 
 ## 3. Key Components
 
-- **VPC Module:** Networking (VPC, subnets, NAT, route tables)
+- **VPC Module:** Networking (VPC, subnets, NAT, route tables, Karpenter discovery tags)
 - **EKS Module:** EKS cluster/node group, outputs (name, endpoint, OIDC issuer, CA)
 - **IAM_EKS Module:** IAM roles for EKS cluster/node group (OIDC, least-privilege)
-- **IAM Module:** Karpenter controller IAM role (OIDC integration)
-- **Karpenter Manifests:** Kubernetes resources for dynamic GPU node provisioning
-- **CI/CD Workflow:** Automates deploy, job run, log collection, teardown
+- **IAM Module:** Karpenter controller IAM role (IRSA integration)
+- **Karpenter Manifests:** Kubernetes resources for dynamic node provisioning (CPU/GPU)
+- **CI/CD Workflow:** Automates deploy, job run, GPU test, log collection, teardown
 
 ---
 
 ## 4. Data Flow & Communication
 
+### Infrastructure Provisioning Flow
+
 ```
-Terraform Root (main.tf)
+Terraform Apply (main.tf)
    ├─ VPC Module → Outputs subnet IDs
    ├─ IAM_EKS Module → Outputs cluster/node role ARNs
    ├─ EKS Module (uses subnet IDs, role ARNs) → Outputs cluster info, OIDC, CA
@@ -64,62 +108,95 @@ Terraform Root (main.tf)
    └─ OIDC Provider (uses EKS outputs)
 ```
 
-**CI/CD Flow:**
+### Karpenter Autoscaling Flow
+
 ```
-GitHub Actions Workflow
-   ├─ Triggers Terraform deploy (creates VPC, EKS, IAM, OIDC)
-   ├─ Deploys Karpenter and job manifests to EKS
-   ├─ Karpenter provisions GPU nodes as needed
-   ├─ Job runs, logs collected
-   └─ Terraform destroy (tears down all resources)
+1. User/CI/CD creates a Kubernetes Job (CPU or GPU)
+2. Pod is Pending (no node with required resources)
+3. Karpenter detects need, provisions node (CPU or GPU instance)
+4. Node registers, pod runs
+5. After job completes + TTL, Karpenter scales node down
+```
+
+### CI/CD Execution Flow
+
+```
+1. Checkout Code
+2. Configure AWS Credentials (OIDC-based, no secrets!)
+3. Terraform Init/Plan/Apply
+4. Get Terraform Outputs (cluster name, endpoint, role ARNs)
+5. Configure kubectl (connect to EKS cluster)
+6. Deploy Karpenter (Helm chart)
+7. Wait for Karpenter Ready (health checks)
+8. Apply Karpenter Provisioner
+9. Deploy App Job and GPU Test Job
+10. Wait for Job Completion
+11. Collect Metrics and Logs
+12. Terraform Destroy (if not 'deploy' only)
+13. Generate & Upload Summary Report
 ```
 
 ---
 
-## 5. Tech Stack & Dependencies
+## 5. GPU Autoscaling Test
 
-- **AWS:** EKS, EC2, EFS, IAM
-- **Terraform:** Modular, environment-based IaC
-- **Karpenter:** Advanced Kubernetes autoscaler
-- **GitHub Actions:** CI/CD automation with OIDC
-- **Kubernetes:** Container orchestration for LLM jobs
+- The pipeline includes a GPU test job (`gpu-test-job.yml`) that requests a GPU node.
+- The CI/CD summary report will show if a GPU node was provisioned and the test ran successfully.
+- This validates end-to-end autoscaling for both CPU and GPU workloads.
 
 ---
 
-## 6. Execution Flow Example
+## 6. Tech Stack & Dependencies
 
-1. **CI/CD Trigger:** User starts GitHub Actions workflow, specifying job parameters
-2. **Terraform Deploy:** Provisions VPC, EKS, IAM roles, OIDC provider
-3. **Cluster Ready:** EKS cluster is up, OIDC provider configured, IAM roles attached
-4. **Karpenter Deploy:** Karpenter controller and provisioner CRDs applied
-5. **Job Launch:** Llama 3 job manifest deployed; Karpenter provisions GPU nodes
-6. **Job Execution:** Model runs, logs and resource IDs collected
-7. **Teardown:** Workflow runs `terraform destroy` to remove all resources
+| Layer           | Technology         | Purpose/Why Used                                  |
+|-----------------|-------------------|--------------------------------------------------- |
+| Infrastructure  | Terraform, AWS    | Declarative IaC, managed EKS, VPC, IAM, OIDC       |
+| Kubernetes      | EKS, Karpenter    | Cluster orchestration, fast autoscaling            |
+| CI/CD           | GitHub Actions    | Automated deploy, test, destroy, reporting         |
+| Supporting      | Python, jq, bash  | OIDC thumbprint, JSON parsing, scripting           |
 
 ---
 
 ## 7. Strengths & Tradeoffs
 
 **Strengths:**
-- Highly modular and maintainable Terraform codebase
-- No circular dependencies; clean separation of concerns
-- Secure OIDC integration for CI/CD
-- Cost-optimized: ephemeral infra, spot GPU support, zero baseline nodes
-- Automated summary reporting and outputs for downstream use
+- Modular, reusable Terraform modules
+- Secure OIDC/IRSA integration (no static secrets)
+- Aggressive cost optimization (ephemeral infra, fast scale-down)
+- Automated GPU/CPU autoscaling validation in CI/CD
+- Detailed summary reports and artifact collection
 
 **Tradeoffs:**
-- Initial setup complexity (multiple modules, OIDC wiring)
-- Requires careful output management between modules
-- Ephemeral infra means state is not persisted between runs (by design)
+- Initial setup complexity (multi-module, OIDC wiring)
+- Cold start time for infra and node provisioning
+- Limited to AWS us-east-1 and t3/g4dn instance families by default
 
 ---
 
-## 8. Final Summary
+## 8. Quickstart
 
-Project Aura_AI-driven-Under-utilized-Resource-Autoscaler is a modular, production-grade Terraform and CI/CD system for running LLM workloads on AWS EKS with just-in-time GPU autoscaling. It automates the full lifecycle, ensures security and cost efficiency, and exposes all key outputs for downstream automation.
+1. Fork and clone this repo
+2. Set up AWS OIDC role for GitHub Actions (see `.github/workflows/cd-cd.yml`)
+3. Edit `env.example` and copy to `.env` with your settings
+4. Trigger the GitHub Actions workflow (`deploy-and-destroy`)
+5. Review the summary report for autoscaling and GPU test results
 
-**In short:**
-> This repo lets you spin up, run, and tear down GPU-powered EKS clusters for AI jobs on AWS, all automated and secure, with zero idle cost.
+---
+
+## 9. Appendix: Key Files Reference
+
+| File | Purpose |
+|------|---------|
+| `terraform/environments/dev/main.tf` | Root module - wires all components together |
+| `terraform/modules/VPC/main.tf` | Network infrastructure (VPC, subnets, NAT) |
+| `terraform/modules/EKS/main.tf` | Kubernetes cluster + node group + access control |
+| `terraform/modules/IAM/main.tf` | Karpenter controller IAM role (IRSA) |
+| `terraform/modules/IAM_EKS/main.tf` | EKS cluster/node IAM roles |
+| `Karpenter/main.yml` | Karpenter Provisioner CRD (defines scaling behavior) |
+| `Karpenter/app-job.yml` | Example CPU Job manifest |
+| `Karpenter/gpu-test-job.yml` | Example GPU Job manifest (autoscaling test) |
+| `.github/workflows/cd-cd.yml` | CI/CD pipeline (deploy → run → destroy) |
+| `terraform/environments/dev/get-oidc-thumbprint.py` | Helper script for OIDC provider setup |
 
 ---
 

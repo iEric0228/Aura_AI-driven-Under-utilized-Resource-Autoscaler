@@ -48,6 +48,48 @@ jobs:
         working-directory: ./terraform/environments/dev
         run: terraform init
 
+      - name: Proactively Import Existing IAM Roles and Policies
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          set -e
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          cd ./terraform/environments/dev
+          # Import EKS Node Instance Profile if exists in AWS and not in state
+          if aws iam get-instance-profile --instance-profile-name aura-eks-node-role-instance-profile >/dev/null 2>&1; then 
+            if ! terraform state list | grep -q "module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile"; then
+              terraform import 'module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile' aura-eks-node-role-instance-profile || true
+            fi
+          fi  
+
+          # Import EKS Cluster Role if exists in AWS and not in state
+          if aws iam get-role --role-name aura-eks-cluster-role >/dev/null 2>&1; then
+            if ! terraform state list | grep -q "module.iam_eks.aws_iam_role.eks_cluster_role"; then
+              terraform import 'module.iam_eks.aws_iam_role.eks_cluster_role' aura-eks-cluster-role || true
+            fi
+          fi
+
+          # Import EKS Node Role if exists in AWS and not in state
+          if aws iam get-role --role-name aura-eks-node-role >/dev/null 2>&1; then
+            if ! terraform state list | grep -q "module.iam_eks.aws_iam_role.eks_node_role"; then
+              terraform import 'module.iam_eks.aws_iam_role.eks_node_role' aura-eks-node-role || true
+            fi
+          fi
+
+          # Import Karpenter Controller Policy if exists in AWS and not in state
+          if aws iam get-policy --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/aura-karpenter-controller-role-policy >/dev/null 2>&1; then
+            if ! terraform state list | grep -q "module.iam.aws_iam_policy.karpenter_controller_inline"; then
+              terraform import 'module.iam.aws_iam_policy.karpenter_controller_inline' arn:aws:iam::${ACCOUNT_ID}:policy/aura-karpenter-controller-role-policy || true
+            fi
+          fi
+          # Import EKS Node Instance Profile if exists in AWS and not in state
+          if aws iam get-instance-profile --instance-profile-name aura-eks-node-role-instance-profile >/dev/null 2>&1; then 
+            if ! terraform state list | grep -q "module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile"; then
+               terraform import 'module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile' aura-eks-node-role-instance-profile || true
+            fi
+          fi
+        shell: bash
+        continue-on-error: true
+
       - name: Terraform Plan 
         if: ${{ github.event.inputs.action != 'destroy' }}
         working-directory: ./terraform/environments/dev
@@ -77,23 +119,105 @@ jobs:
         run: |
           helm repo add karpenter https://charts.karpenter.sh
           helm repo update
+          CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
+          CLUSTER_ENDPOINT=$(jq -r .cluster_endpoint.value tf-outputs.json)
+          KARPENTER_ROLE_ARN=$(jq -r .karpenter_controller_role_arn.value tf-outputs.json)
+          INSTANCE_PROFILE=$(jq -r .node_instance_profile_name.value tf-outputs.json)
+          echo "Installing Karpenter with:"
+          echo "  Cluster Name: $CLUSTER_NAME"
+          echo "  Cluster Endpoint: $CLUSTER_ENDPOINT"
+          echo "  Role ARN: $KARPENTER_ROLE_ARN"
+          echo "  Instance Profile: $INSTANCE_PROFILE"
           helm install karpenter karpenter/karpenter \
             --namespace karpenter --create-namespace \
-            --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(jq -r .karpenter_controller_role_arn.value tf-outputs.json) \
-            --set controller.clusterName=$(jq -r .cluster_name.value tf-outputs.json) \
-            --set controller.clusterEndpoint=$(jq -r .cluster_endpoint.value tf-outputs.json) \
-            --set controller.aws.defaultInstanceProfile=$(jq -r .node_instance_profile_name.value tf-outputs.json)
-          kubectl apply -f ./Karpenter/main.yaml
+            --version 0.16.3 \
+            --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$KARPENTER_ROLE_ARN \
+            --set clusterName=$CLUSTER_NAME \
+            --set clusterEndpoint=$CLUSTER_ENDPOINT \
+            --set aws.defaultInstanceProfile=$INSTANCE_PROFILE \
+            --set settings.clusterName=$CLUSTER_NAME
+        continue-on-error: false
+
+      - name: Wait for Karpenter to be Ready
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          echo "Waiting for Karpenter controller pods to be ready..."
+          TIMEOUT=300
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            PODS=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o json)
+            READY_COUNT=$(echo "$PODS" | jq -r '.items[] | select(.status.containerStatuses[]?.ready == true) | .metadata.name' | wc -l | tr -d ' ')
+            TOTAL_CONTAINERS=$(echo "$PODS" | jq -r '.items[].status.containerStatuses | length' | awk '{sum+=$1} END {print sum}')
+            READY_CONTAINERS=$(echo "$PODS" | jq -r '.items[].status.containerStatuses[]? | select(.ready == true) | .name' | wc -l | tr -d ' ')
+            
+            echo "Ready containers: $READY_CONTAINERS/$TOTAL_CONTAINERS"
+            kubectl get pods -n karpenter
+            
+            if [ "$READY_CONTAINERS" -ge 2 ] && [ "$READY_CONTAINERS" -eq "$TOTAL_CONTAINERS" ]; then
+              echo "All Karpenter containers are ready!"
+              break
+            fi
+            
+            # Check for crash loops and show logs
+            CRASHING=$(echo "$PODS" | jq -r '.items[] | select(.status.containerStatuses[]?.restartCount > 0) | .metadata.name' | head -1)
+            if [ ! -z "$CRASHING" ]; then
+              echo "Found crashing pod: $CRASHING"
+              echo "=== Controller logs ==="
+              kubectl logs $CRASHING -n karpenter -c controller --tail=50 || true
+              echo "=== Webhook logs ==="
+              kubectl logs $CRASHING -n karpenter -c webhook --tail=50 || true
+            fi
+            
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "Timeout waiting for Karpenter pods. Final status:"
+            kubectl get pods -n karpenter -o wide
+            kubectl get svc -n karpenter
+            kubectl get endpoints -n karpenter
+            echo "=== Checking for errors ==="
+            kubectl describe pods -n karpenter -l app.kubernetes.io/name=karpenter | grep -A 10 "Events:" || true
+            exit 1
+          fi
+          
+          echo "Karpenter is ready!"
+          kubectl get pods -n karpenter
+          kubectl get svc -n karpenter
+          kubectl get endpoints -n karpenter
         continue-on-error: false
 
       - name: Apply Karpenter Provisioner
         if: ${{ github.event.inputs.action != 'destroy' }}
-        run: kubectl apply -f ./Karpenter/main.yml
+        run: |
+          # Workaround for Karpenter v0.16.3 webhook TLS issue
+          # The webhook container's TLS certificate doesn't match the service name,
+          # causing probes to fail and preventing the Provisioner from being applied.
+          # Delete webhooks temporarily, apply Provisioner, then webhooks will be recreated by Karpenter.
+          echo "Temporarily disabling webhooks to work around TLS issue..."
+          kubectl delete mutatingwebhookconfiguration defaulting.webhook.provisioners.karpenter.sh --ignore-not-found || true
+          kubectl delete validatingwebhookconfiguration validation.webhook.provisioners.karpenter.sh --ignore-not-found || true
+          sleep 2
+          echo "Applying Karpenter Provisioner..."
+          kubectl apply -f ./Karpenter/main.yml
         continue-on-error: false
 
       - name: Deploy App/Job
         if: ${{ github.event.inputs.action != 'destroy' }}
-        run: kubectl apply -f ./app-job.yaml
+        run: kubectl apply -f ./Karpenter/app-job.yml
+        continue-on-error: false
+
+      - name: Deploy GPU Test Job
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: kubectl apply -f ./Karpenter/gpu-test-job.yml
+        continue-on-error: false
+
+      - name: Wait for GPU Test Job Completion
+        if: ${{ github.event.inputs.action == 'deploy-and-destroy' }}
+        run: |
+          kubectl wait --for=condition=complete --timeout=900s job/gpu-test-job -n default
+          kubectl logs job/gpu-test-job -n default > gpu-job-logs.txt || echo "No logs found" > gpu-job-logs.txt
         continue-on-error: false
 
       - name: Wait for Job Completion
@@ -109,25 +233,277 @@ jobs:
         run: terraform destroy -auto-approve
         continue-on-error: false
 
+      - name: Collect Cluster Information
+        if: always() && github.event.inputs.action != 'destroy'
+        run: |
+          # Collect cluster and node information
+          kubectl get nodes -o json > nodes.json 2>/dev/null || echo "[]" > nodes.json
+          kubectl get pods --all-namespaces -o json > pods.json 2>/dev/null || echo "[]" > pods.json
+          kubectl get provisioner -o json > provisioners.json 2>/dev/null || echo "[]" > provisioners.json
+          kubectl get events --all-namespaces --sort-by='.lastTimestamp' > events.txt 2>/dev/null || echo "No events found" > events.txt
+          kubectl get pods -n karpenter -o json > karpenter-pods.json 2>/dev/null || echo "[]" > karpenter-pods.json
+        continue-on-error: true
+
       - name: Generate Summary
         if: always()
         run: |
-          echo "### CI/CD Summary" > summary.md
-          echo "- **Action:** ${{ github.event.inputs.action }}" >> summary.md
-          echo "- **Job Name:** ${{ github.event.inputs.job_name }}" >> summary.md
-          echo "- **Job Namespace:** ${{ github.event.inputs.job_namespace }}" >> summary.md
-          echo "- **Workflow Status:** ${{ job.status }}" >> summary.md
-          echo "- **Cluster Name:** $(jq -r .cluster_name.value tf-outputs.json)" >> summary.md
-          echo "- **Cluster Endpoint:** $(jq -r .cluster_endpoint.value tf-outputs.json)" >> summary.md
-          echo "- **Karpenter Controller Role ARN:** $(jq -r .karpenter_controller_role_arn.value tf-outputs.json)" >> summary.md
-          echo "- **Node Instance Profile Name:** $(jq -r .node_instance_profile_name.value tf-outputs.json)" >> summary.md
-          echo "--- Job Logs ---" >> summary.md
-          cat job-logs.txt >> summary.md
-        shell: bash
+          echo "# 🚀 CI/CD Deployment Summary" > summary.md
+          echo "" >> summary.md
+          echo "**Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> summary.md
+          echo "" >> summary.md
+          
+          # Workflow Information
+          # Collect cluster and node information
+          kubectl get nodes -o json > nodes.json 2>/dev/null || echo "[]" > nodes.json
+          kubectl get pods --all-namespaces -o json > pods.json 2>/dev/null || echo "[]" > pods.json
+          kubectl get provisioner -o json > provisioners.json 2>/dev/null || echo "[]" > provisioners.json
+          kubectl get events --all-namespaces --sort-by='.lastTimestamp' > events.txt 2>/dev/null || echo "No events found" > events.txt
+          kubectl get pods -n karpenter -o json > karpenter-pods.json 2>/dev/null || echo "[]" > karpenter-pods.json
+        continue-on-error: true
 
-      - name: Upload Summary
+      - name: Generate Summary
+        if: always()
+        run: |
+          echo "# 🚀 CI/CD Deployment Summary" > summary.md
+          echo "" >> summary.md
+          echo "**Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> summary.md
+          echo "" >> summary.md
+          
+          # Workflow Information
+          echo "## 📋 Workflow Information" >> summary.md
+          echo "" >> summary.md
+          echo "| Field | Value |" >> summary.md
+          echo "|-------|-------|" >> summary.md
+          echo "| **Action** | \`${{ github.event.inputs.action }}\` |" >> summary.md
+          echo "| **Workflow Status** | \`${{ job.status }}\` |" >> summary.md
+          echo "| **Job Name** | \`${{ github.event.inputs.job_name }}\` |" >> summary.md
+          echo "| **Job Namespace** | \`${{ github.event.inputs.job_namespace }}\` |" >> summary.md
+          echo "| **Run ID** | \`${{ github.run_id }}\` |" >> summary.md
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> summary.md
+          echo "" >> summary.md
+          
+          # Cluster Information
+          if [ -f tf-outputs.json ]; then
+            echo "## 🎯 Cluster Information" >> summary.md
+            echo "" >> summary.md
+            echo "| Field | Value |" >> summary.md
+            echo "|-------|-------|" >> summary.md
+            echo "| **Cluster Name** | \`$(jq -r .cluster_name.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
+            echo "| **Cluster Endpoint** | \`$(jq -r .cluster_endpoint.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
+            echo "| **OIDC Issuer URL** | \`$(jq -r .cluster_oidc_issuer_url.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
+            echo "| **Karpenter Controller Role ARN** | \`$(jq -r .karpenter_controller_role_arn.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
+            echo "| **Node Instance Profile** | \`$(jq -r .node_instance_profile_name.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
+            echo "" >> summary.md
+          fi
+          
+          # Node Information
+          if [ -f nodes.json ] && [ "$(jq '.items | length' nodes.json 2>/dev/null || echo 0)" -gt 0 ]; then
+            echo "## 🖥️ Node Information" >> summary.md
+            echo "" >> summary.md
+            echo "### Node Summary" >> summary.md
+            echo "" >> summary.md
+            TOTAL_NODES=$(jq '.items | length' nodes.json 2>/dev/null || echo 0)
+            READY_NODES=$(jq '[.items[] | select(.status.conditions[]? | select(.type=="Ready" and .status=="True"))] | length' nodes.json 2>/dev/null || echo 0)
+            KARPENTER_NODES=$(jq '[.items[] | select(.metadata.labels."karpenter.sh/provisioner-name" != null)] | length' nodes.json 2>/dev/null || echo 0)
+            echo "- **Total Nodes:** $TOTAL_NODES" >> summary.md
+            echo "- **Ready Nodes:** $READY_NODES" >> summary.md
+            echo "- **Karpenter-Managed Nodes:** $KARPENTER_NODES" >> summary.md
+            echo "" >> summary.md
+            
+            echo "### Node Details" >> summary.md
+            echo "" >> summary.md
+            echo "\`\`\`" >> summary.md
+            kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,ROLES:.metadata.labels.node-role\\.kubernetes\\.io/worker,INSTANCE-TYPE:.metadata.labels.node\\.kubernetes\\.io/instance-type,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory,KARPENTER:.metadata.labels.karpenter\\.sh/provisioner-name,AGE:.metadata.creationTimestamp 2>/dev/null || echo "Unable to retrieve node information" >> summary.md
+            echo "\`\`\`" >> summary.md
+            echo "" >> summary.md
+            
+            # Node resource utilization
+            echo "### Node Resource Utilization" >> summary.md
+            echo "" >> summary.md
+            echo "\`\`\`" >> summary.md
+            kubectl top nodes 2>/dev/null || echo "Metrics server not available" >> summary.md
+            echo "\`\`\`" >> summary.md
+            echo "" >> summary.md
+          else
+            echo "## 🖥️ Node Information" >> summary.md
+            echo "" >> summary.md
+            echo "*No nodes found or cluster not accessible*" >> summary.md
+            echo "" >> summary.md
+          fi
+          
+          # Karpenter Status
+          if [ -f karpenter-pods.json ] && [ "$(jq '.items | length' karpenter-pods.json 2>/dev/null || echo 0)" -gt 0 ]; then
+            echo "## ⚡ Karpenter Status" >> summary.md
+            echo "" >> summary.md
+            echo "### Karpenter Pods" >> summary.md
+            echo "" >> summary.md
+            echo "\`\`\`" >> summary.md
+            kubectl get pods -n karpenter -o wide 2>/dev/null || echo "Unable to retrieve Karpenter pods" >> summary.md
+            echo "\`\`\`" >> summary.md
+            echo "" >> summary.md
+            
+            # Provisioner Status
+            if [ -f provisioners.json ] && [ "$(jq '.items | length' provisioners.json 2>/dev/null || echo 0)" -gt 0 ]; then
+              echo "### Provisioner Configuration" >> summary.md
+              echo "" >> summary.md
+              echo "\`\`\`yaml" >> summary.md
+              kubectl get provisioner -o yaml 2>/dev/null || echo "Unable to retrieve provisioner" >> summary.md
+              echo "\`\`\`" >> summary.md
+              echo "" >> summary.md
+            fi
+            
+            # Karpenter Events
+            echo "### Karpenter Events (Last 20)" >> summary.md
+            echo "" >> summary.md
+            echo "\`\`\`" >> summary.md
+            kubectl get events --all-namespaces --sort-by='.lastTimestamp' | grep -i karpenter | tail -20 2>/dev/null || echo "No Karpenter events found" >> summary.md
+            echo "\`\`\`" >> summary.md
+            echo "" >> summary.md
+          fi
+          
+          # Pod Information
+          if [ -f pods.json ] && [ "$(jq '.items | length' pods.json 2>/dev/null || echo 0)" -gt 0 ]; then
+            echo "## 📦 Pod Information" >> summary.md
+            echo "" >> summary.md
+            TOTAL_PODS=$(jq '.items | length' pods.json 2>/dev/null || echo 0)
+            RUNNING_PODS=$(jq '[.items[] | select(.status.phase=="Running")] | length' pods.json 2>/dev/null || echo 0)
+            PENDING_PODS=$(jq '[.items[] | select(.status.phase=="Pending")] | length' pods.json 2>/dev/null || echo 0)
+            FAILED_PODS=$(jq '[.items[] | select(.status.phase=="Failed")] | length' pods.json 2>/dev/null || echo 0)
+            
+            echo "### Pod Summary" >> summary.md
+            echo "" >> summary.md
+            echo "- **Total Pods:** $TOTAL_PODS" >> summary.md
+            echo "- **Running:** $RUNNING_PODS" >> summary.md
+            echo "- **Pending:** $PENDING_PODS" >> summary.md
+            echo "- **Failed:** $FAILED_PODS" >> summary.md
+            echo "" >> summary.md
+            
+            echo "### Pod Details" >> summary.md
+            echo "" >> summary.md
+            echo "\`\`\`" >> summary.md
+            kubectl get pods --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,NODE:.spec.nodeName,CPU-REQ:.spec.containers[0].resources.requests.cpu,MEM-REQ:.spec.containers[0].resources.requests.memory,AGE:.metadata.creationTimestamp 2>/dev/null | head -50 || echo "Unable to retrieve pod information" >> summary.md
+            echo "\`\`\`" >> summary.md
+            echo "" >> summary.md
+            
+            # Job Status
+            if [ "${{ github.event.inputs.action }}" == "deploy-and-destroy" ] || [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+              echo "### Job Status: ${{ github.event.inputs.job_name }}" >> summary.md
+              echo "" >> summary.md
+              echo "\`\`\`" >> summary.md
+              kubectl get job ${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} -o wide 2>/dev/null || echo "Job not found or not accessible" >> summary.md
+              echo "\`\`\`" >> summary.md
+              echo "" >> summary.md
+              
+              if [ -f job-logs.txt ]; then
+                echo "### Job Logs" >> summary.md
+                echo "" >> summary.md
+                echo "\`\`\`" >> summary.md
+                head -100 job-logs.txt >> summary.md
+                if [ $(wc -l < job-logs.txt) -gt 100 ]; then
+                  echo "" >> summary.md
+                  echo "... (truncated, see full logs in artifact)" >> summary.md
+                fi
+                echo "\`\`\`" >> summary.md
+                echo "" >> summary.md
+              fi
+            fi
+          fi
+          
+          # GPU Test Job Results
+          if [ -f gpu-job-logs.txt ]; then
+            echo "## 🧪 GPU Autoscaling Test" >> summary.md
+            echo "" >> summary.md
+            echo "### GPU Test Job Logs" >> summary.md
+            echo "" >> summary.md
+            echo '\`\`\`' >> summary.md
+            head -50 gpu-job-logs.txt >> summary.md
+            if [ $(wc -l < gpu-job-logs.txt) -gt 50 ]; then
+              echo "... (truncated, see full logs in artifact)" >> summary.md
+            fi
+            echo '\`\`\`' >> summary.md
+            echo "" >> summary.md
+            # Check for success marker
+            if grep -q 'GPU test successful!' gpu-job-logs.txt; then
+              echo "**Result:** ✅ GPU node was provisioned and test ran successfully." >> summary.md
+            else
+              echo "**Result:** ❌ GPU node was NOT provisioned or test failed." >> summary.md
+            fi
+            echo "" >> summary.md
+          fi
+          
+          # Resource Summary
+          echo "## 📊 Resource Summary" >> summary.md
+          echo "" >> summary.md
+          if [ -f nodes.json ] && [ "$(jq '.items | length' nodes.json 2>/dev/null || echo 0)" -gt 0 ]; then
+            TOTAL_CPU=$(jq '[.items[].status.capacity.cpu] | map(tonumber? // 0) | add' nodes.json 2>/dev/null || echo 0)
+            TOTAL_MEMORY=$(jq '[.items[].status.capacity.memory] | map(gsub("Ki"; "") | tonumber? // 0) | add' nodes.json 2>/dev/null || echo 0)
+            TOTAL_MEMORY_GB=$((TOTAL_MEMORY / 1024 / 1024))
+            echo "- **Total Cluster CPU:** ${TOTAL_CPU} cores" >> summary.md
+            echo "- **Total Cluster Memory:** ~${TOTAL_MEMORY_GB} GB" >> summary.md
+            echo "" >> summary.md
+          fi
+          
+          # Karpenter Provisioning Activity
+          if [ -f events.txt ]; then
+            echo "## 🔄 Karpenter Provisioning Activity" >> summary.md
+            echo "" >> summary.md
+            PROVISIONING_EVENTS=$(grep -i "karpenter\|provision\|launch\|node" events.txt | tail -30 || echo "")
+            if [ ! -z "$PROVISIONING_EVENTS" ]; then
+              echo "\`\`\`" >> summary.md
+              echo "$PROVISIONING_EVENTS" >> summary.md
+              echo "\`\`\`" >> summary.md
+            else
+              echo "*No provisioning events found*" >> summary.md
+            fi
+            echo "" >> summary.md
+          fi
+          
+          # Errors and Warnings
+          echo "## ⚠️ Errors and Warnings" >> summary.md
+          echo "" >> summary.md
+          if [ -f events.txt ]; then
+            ERROR_EVENTS=$(grep -i "error\|warning\|failed" events.txt | tail -20 || echo "")
+            if [ ! -z "$ERROR_EVENTS" ]; then
+              echo "\`\`\`" >> summary.md
+              echo "$ERROR_EVENTS" >> summary.md
+              echo "\`\`\`" >> summary.md
+            else
+              echo "*No errors or warnings found*" >> summary.md
+            fi
+          else
+            echo "*Unable to retrieve events*" >> summary.md
+          fi
+          echo "" >> summary.md
+          
+          # Footer
+          echo "---" >> summary.md
+          echo "" >> summary.md
+          echo "**Workflow Run:** [View on GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> summary.md
+          echo "" >> summary.md
+          echo "*This summary was automatically generated by the CI/CD workflow.*" >> summary.md
+        shell: bash
+        continue-on-error: true
+
+      - name: Upload Summary and Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: summary
-          path: summary.md
+          name: deployment-summary
+          path: |
+            summary.md
+            gpu-job-logs.txt
+            nodes.json
+            pods.json
+            provisioners.json
+            karpenter-pods.json
+            events.txt
+            job-logs.txt
+            gpu-job-logs.txt
+            tf-outputs.json
+          retention-days: 7
+
+      - name: Terraform Destroy (Always)
+        if: always() && github.event.inputs.action != 'deploy'
+        working-directory: ./terraform/environments/dev
+        run: terraform destroy -auto-approve
+        continue-on-error: false

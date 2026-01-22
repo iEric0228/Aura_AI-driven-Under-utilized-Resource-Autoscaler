@@ -8,8 +8,18 @@ variable "cluster_role_arn" {
   type        = string
 }
 
+variable "cluster_role_name" {
+  description = "The name of the IAM role to associate with the EKS cluster (used for policy attachments)"
+  type        = string
+}
+
 variable "node_role_arn" {
   description = "The ARN of the IAM role to associate with the EKS node group"
+  type        = string
+}
+
+variable "node_role_name" {
+  description = "The name of the IAM role to associate with the EKS node group (used for policy attachments)"
   type        = string
 }
 
@@ -36,4 +46,9 @@ variable "node_group_min_size" {
 variable "node_instance_types" {
   description = "The instance types to use for the EKS nodes"
   type        = list(string)
+}
+
+variable "admin_principal_arn" {
+  description = "IAM principal ARN to grant EKS cluster admin access (via access entry)"
+  type        = string
 }

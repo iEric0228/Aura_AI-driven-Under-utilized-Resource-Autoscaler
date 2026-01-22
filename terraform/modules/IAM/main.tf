@@ -1,8 +1,3 @@
-resource "aws_iam_role" "this" {
-  name               = var.role_name
-  assume_role_policy = var.assume_role_policy
-}
-
 resource "aws_iam_role" "karpenter_controller" {
   name = var.karpenter_controller_role_name
   assume_role_policy = jsonencode({
@@ -25,6 +20,25 @@ resource "aws_iam_role" "karpenter_controller" {
 }
 
 resource "aws_iam_role_policy_attachment" "karpenter_controller_policy" {
+  count      = var.karpenter_controller_policy_arn == null ? 0 : 1
   role       = aws_iam_role.karpenter_controller.name
   policy_arn = var.karpenter_controller_policy_arn
+}
+
+resource "aws_iam_policy" "karpenter_controller_inline" {
+  name   = "${var.karpenter_controller_role_name}-policy"
+  policy = var.karpenter_controller_policy_json
+}
+
+resource "aws_iam_role_policy_attachment" "karpenter_controller_inline_attachment" {
+  role       = aws_iam_role.karpenter_controller.name
+  policy_arn = aws_iam_policy.karpenter_controller_inline.arn
+}
+
+output "karpenter_controller_role_arn" {
+  value = aws_iam_role.karpenter_controller.arn
+}
+
+output "karpenter_controller_policy_arn" {
+  value = aws_iam_policy.karpenter_controller_inline.arn
 }
