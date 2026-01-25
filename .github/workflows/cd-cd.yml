@@ -105,13 +105,39 @@ jobs:
         if: ${{ github.event.inputs.action != 'destroy' }}
         id: tfoutputs
         working-directory: ./terraform/environments/dev
-        run: terraform output -json > tf-outputs.json
+        run: terraform output -json > "$GITHUB_WORKSPACE/tf-outputs.json"
         continue-on-error: false
+
+      - name: Validate Terraform Outputs
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          set -euo pipefail
+          echo "Validating tf-outputs.json exists and required keys are non-empty..."
+          if [ ! -s "tf-outputs.json" ]; then
+            echo "ERROR: tf-outputs.json not found (or empty) at repo root."
+            echo "Hint: Terraform apply/output likely failed earlier."
+            ls -la
+            exit 1
+          fi
+
+          REQUIRED_KEYS=(cluster_name cluster_endpoint karpenter_controller_role_arn node_instance_profile_name)
+          for key in "${REQUIRED_KEYS[@]}"; do
+            value="$(jq -r --arg k "$key" '.[$k].value // empty' tf-outputs.json)"
+            if [ -z "$value" ] || [ "$value" = "null" ]; then
+              echo "ERROR: Missing/empty Terraform output: $key"
+              echo "Available keys:"
+              jq -r 'keys[]' tf-outputs.json || true
+              exit 1
+            fi
+          done
+
+          echo "Terraform outputs OK."
+        shell: bash
 
       - name: Set up kubectl
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name $(jq -r .cluster_name.value tf-outputs.json)
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$(jq -r .cluster_name.value tf-outputs.json)"
         continue-on-error: false
       
       - name: Deploy Karpenter
@@ -489,6 +515,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deployment-summary
+          if-no-files-found: warn
           path: |
             summary.md
             gpu-job-logs.txt
@@ -498,7 +525,6 @@ jobs:
             karpenter-pods.json
             events.txt
             job-logs.txt
-            gpu-job-logs.txt
             tf-outputs.json
           retention-days: 7
 

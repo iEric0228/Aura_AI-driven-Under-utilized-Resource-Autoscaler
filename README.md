@@ -1,6 +1,6 @@
-# Project Aura_AI-driven-Under-utilized-Resource-Autoscaler
+# Project Aura AI‑driven Under‑utilized Resource Autoscaler
 
-AI-Ops Infrastructure on AWS EKS
+Ephemeral AWS EKS infrastructure + Karpenter autoscaling for cost‑efficient batch/AI workloads.
 
 [![Deploy Status](https://github.com/iEric0228/project-Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/cd-cd.yml/badge.svg)](https://github.com/iEric0228/project-Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/cd-cd.yml)
 [![AWS](https://img.shields.io/badge/AWS-FF9900?style=flat-square&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
@@ -8,21 +8,24 @@ AI-Ops Infrastructure on AWS EKS
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
 [![CI/CD](https://img.shields.io/badge/GitHub%20Actions-blue?style=flat-square&logo=github-actions&logoColor=white)](https://github.com/features/actions)
 
+## Documentation
+
+- **Deep dive**: `ARCHITECTURE.md` (detailed module-by-module explanation, flows, and tradeoffs)
+- **CI/CD workflow**: `.github/workflows/cd-cd.yml`
+
 ---
 
 ## 1. Big Picture
 
-**Type:** Cloud infrastructure automation for AI workloads (EKS, GPU, ephemeral infra)
+**Type:** Modular Infrastructure‑as‑Code (Terraform) + CI/CD orchestration (GitHub Actions) for ephemeral EKS clusters.
 
-**Problem Solved:**
-- Enables cost-efficient, on-demand provisioning of GPU resources for LLM jobs
-- Automates full lifecycle (deploy, test, destroy) with secure, modular, production-ready Terraform and GitHub Actions
+**Problem solved:** Spin up an EKS cluster on demand, run Kubernetes Jobs, autoscale nodes with Karpenter, collect results, then destroy everything to avoid idle cost.
 
 ---
 
 ## 2. Architecture Overview
 
-### Modular Infrastructure-as-Code with CI/CD Orchestration
+### Modular IaC + CI/CD Orchestration
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -56,10 +59,11 @@ AI-Ops Infrastructure on AWS EKS
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Directory Structure
+### Repository Layout
 
 ```
 Aura_AI-driven-Under-utilized-Resource-Autoscaler/
+├── ARCHITECTURE.md               # Deep architecture documentation
 ├── terraform/
 │   ├── environments/
 │   │   └── dev/                    # Root module (orchestrates all modules)
@@ -111,11 +115,12 @@ Terraform Apply (main.tf)
 ### Karpenter Autoscaling Flow
 
 ```
-1. User/CI/CD creates a Kubernetes Job (CPU or GPU)
-2. Pod is Pending (no node with required resources)
-3. Karpenter detects need, provisions node (CPU or GPU instance)
-4. Node registers, pod runs
-5. After job completes + TTL, Karpenter scales node down
+1. User/CI/CD creates a Kubernetes Job/Pod
+2. Pod is Pending (no node has enough capacity)
+3. Karpenter detects the pending pod and selects an instance type
+4. Karpenter launches an EC2 instance and the node joins the cluster
+5. Pod schedules and runs
+6. After nodes are empty for `ttlSecondsAfterEmpty`, Karpenter terminates them
 ```
 
 ### CI/CD Execution Flow
@@ -138,11 +143,11 @@ Terraform Apply (main.tf)
 
 ---
 
-## 5. GPU Autoscaling Test
+## 5. GPU Autoscaling Test (Optional)
 
-- The pipeline includes a GPU test job (`gpu-test-job.yml`) that requests a GPU node.
-- The CI/CD summary report will show if a GPU node was provisioned and the test ran successfully.
-- This validates end-to-end autoscaling for both CPU and GPU workloads.
+This repo includes `Karpenter/gpu-test-job.yml` as an example job requesting `nvidia.com/gpu: 1`.
+
+**Important:** GPU provisioning requires additional setup (GPU-capable instance types in the Provisioner + NVIDIA device plugin + a compatible AMI). If you haven’t configured GPU nodes yet, this job will remain Pending/fail.
 
 ---
 
@@ -175,15 +180,67 @@ Terraform Apply (main.tf)
 
 ## 8. Quickstart
 
-1. Fork and clone this repo
-2. Set up AWS OIDC role for GitHub Actions (see `.github/workflows/cd-cd.yml`)
-3. Edit `env.example` and copy to `.env` with your settings
-4. Trigger the GitHub Actions workflow (`deploy-and-destroy`)
-5. Review the summary report for autoscaling and GPU test results
+### Prerequisites
+
+- **AWS** account with permissions to create: VPC/EKS/IAM/OIDC/EC2
+- **Terraform**, **AWS CLI**, **kubectl**, **helm**, **jq**, **python3**
+- A GitHub Actions OIDC role (see `.github/workflows/cd-cd.yml` → `role-to-assume`)
+
+### Run via CI/CD (recommended)
+
+1. Fork + clone this repo
+2. Ensure the GitHub OIDC role exists (example name: `github-OICD`)
+3. Trigger the workflow `.github/workflows/cd-cd.yml` with:\n   - `deploy-and-destroy` (create infra → run jobs → destroy)\n   - `deploy` (create infra only)\n   - `destroy` (destroy infra only)
+4. Download the workflow artifact **`deployment-summary`** (includes `summary.md` + JSON snapshots + logs)
+
+### Run locally (Terraform)
+
+```bash
+cd terraform/environments/dev
+terraform init
+terraform apply
+```
+
+Then configure kubectl:
+
+```bash
+aws eks update-kubeconfig --region us-east-1 --name aura-eks-dev
+kubectl get nodes
+```
 
 ---
 
-## 9. Appendix: Key Files Reference
+## 9. Troubleshooting
+
+### EKS auth: “the server has asked for the client to provide credentials”
+
+This project uses **EKS API authentication** (`authentication_mode = "API"`), so cluster access is governed by **EKS Access Entries**.
+
+- The EKS module creates an access entry and associates `AmazonEKSClusterAdminPolicy` to an **IAM principal ARN** (`admin_principal_arn`).
+- In CI/CD, the runtime identity is usually an **STS assumed-role ARN**, which is **not** a valid principal for access entries.
+
+**Fix:** ensure `admin_principal_arn` resolves to the underlying IAM role ARN (e.g. `arn:aws:iam::<account_id>:role/github-OICD`).  
+The dev root module now derives this automatically from the caller identity.
+
+### Karpenter: “no security groups exist given constraints”
+
+Your Provisioner selects security groups by tag:
+
+- `karpenter.sh/discovery: aura-eks-dev`
+
+Ensure the **cluster security group** is tagged. The EKS module adds this tag automatically.
+
+### Karpenter: Spot service-linked role error
+
+If you allow Spot (`karpenter.sh/capacity-type: spot`) without the EC2 Spot service-linked role, you may see:
+
+- `AuthFailure.ServiceLinkedRoleCreationNotPermitted`
+
+Either create the service-linked role ahead of time or keep the Provisioner on `on-demand` capacity.
+
+---
+
+## 10. Appendix: Key Files Reference
 
 | File | Purpose |
 |------|---------|
