@@ -15,5 +15,9 @@ spec:
             cpu: "1"
             memory: "2Gi"
             nvidia.com/gpu: 1
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+            nvidia.com/gpu: 1
       restartPolicy: Never
   backoffLimit: 1

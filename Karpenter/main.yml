@@ -6,7 +6,7 @@ spec:
   requirements:
     - key: "node.kubernetes.io/instance-type"
       operator: In
-      values: ["t3.medium", "t3.large", "t3.xlarge"]
+      values: ["g4dn.xlarge", "g5.xlarge", "p3.2xlarge", "t3.medium", "t3.large", "t3.xlarge"]
     - key: "karpenter.sh/capacity-type"
       operator: In
       values: ["on-demand"]
