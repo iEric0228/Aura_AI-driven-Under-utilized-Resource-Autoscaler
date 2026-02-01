@@ -101,6 +101,16 @@ jobs:
         run: terraform apply -auto-approve
         continue-on-error: false
 
+      - name: Debug Terraform Apply
+        if: failure()
+        working-directory: ./terraform/environments/dev
+        run: |
+          echo "=== Terraform Show ==="
+          terraform show || true
+          echo "=== Terraform Providers ==="
+          terraform providers || true
+        continue-on-error: true
+
       - name: Terraform Output
         if: ${{ github.event.inputs.action != 'destroy' }}
         working-directory: ./terraform/environments/dev
@@ -161,11 +171,15 @@ jobs:
           helm install karpenter karpenter/karpenter \
             --namespace karpenter --create-namespace \
             --version 0.16.3 \
-            --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$KARPENTER_ROLE_ARN \
             --set clusterName=$CLUSTER_NAME \
             --set clusterEndpoint=$CLUSTER_ENDPOINT \
+            --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
             --set aws.defaultInstanceProfile=$INSTANCE_PROFILE \
-            --set settings.clusterName=$CLUSTER_NAME
+            --set replicas=1 \
+            --set controller.resources.requests.cpu=200m \
+            --set controller.resources.requests.memory=256Mi \
+            --set controller.resources.limits.cpu=500m \
+            --set controller.resources.limits.memory=512Mi
         continue-on-error: false
 
       - name: Wait for Karpenter to be Ready

@@ -49,6 +49,12 @@ variable "node_instance_types" {
 }
 
 variable "admin_principal_arn" {
-  description = "IAM principal ARN to grant EKS cluster admin access (via access entry)"
+  description = "The ARN of the IAM principal to grant cluster admin access (e.g., GitHub OIDC role)"
   type        = string
+}
+
+variable "local_admin_principal_arn" {
+  description = "Optional: ARN of your IAM user/role for local kubectl access (leave empty to disable)"
+  type        = string
+  default     = ""
 }

@@ -11,10 +11,7 @@ data "aws_iam_policy_document" "eks_assume_role_policy" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  # EKS access entries require an IAM principal ARN (iam::role or iam::user).
-  # In CI/CD, the caller is typically an STS assumed-role ARN like:
-  #   arn:aws:sts::<acct>:assumed-role/<role-name>/<session-name>
-  # Convert that to the underlying IAM role ARN so the access association succeeds.
+
   caller_arn            = data.aws_caller_identity.current.arn
   caller_is_assumedrole = can(regex("^arn:aws:sts::[0-9]+:assumed-role/", local.caller_arn))
   caller_role_name      = local.caller_is_assumedrole ? element(split("/", local.caller_arn), 1) : null
@@ -46,6 +43,7 @@ module "eks" {
   node_role_arn           = module.iam_eks.node_role_arn
   node_role_name          = "aura-eks-node-role"
   admin_principal_arn     = local.caller_iam_role_arn
+  local_admin_principal_arn = "arn:aws:iam::125156866057:user/cloud-resume"
   subnet_ids              = module.vpc.private_subnet_ids
   node_group_desired_size = 1
   node_group_min_size     = 1

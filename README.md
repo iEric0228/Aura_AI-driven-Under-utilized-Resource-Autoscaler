@@ -37,8 +37,8 @@ Ephemeral AWS EKS infrastructure + Karpenter autoscaling for cost‑efficient ba
 ┌─────────────────────────────────────────────────────────────┐
 │              Infrastructure Layer (Terraform)               │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐     │
-│  │   VPC    │→ │   EKS    │→ │   IAM    │→ │  OIDC   │      │
-│  │  Module  │  │  Module  │  │  Module  │  │ Provider│      │
+│  │   VPC    │→ │   EKS    │→ │   IAM    │→ │  OIDC    │     │
+│  │  Module  │  │  Module  │  │  Module  │  │ Provider │     │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘     │
 └─────────────────────────────────────────────────────────────┘
                             │
@@ -47,14 +47,14 @@ Ephemeral AWS EKS infrastructure + Karpenter autoscaling for cost‑efficient ba
 │            Kubernetes Layer (EKS + Karpenter)               │
 │  ┌──────────────┐         ┌──────────────┐                  │
 │  │   EKS        │         │  Karpenter   │                  │
-│  │  Cluster     │◄────────│  Controller │                   │
+│  │  Cluster     │◄────────│  Controller  │                  │
 │  └──────────────┘         └──────────────┘                  │
 │       │                          │                          │
 │       └──────────┬───────────────┘                          │
 │                  ▼                                          │
 │         ┌─────────────────┐                                 │
-│         │  EC2 Nodes       │                                │
-│         │  (Auto-provision)│                                │
+│         │ EC2 Nodes       │                                 │
+│         │ (Auto-provision)│                                 │
 │         └─────────────────┘                                 │
 └─────────────────────────────────────────────────────────────┘
 ```

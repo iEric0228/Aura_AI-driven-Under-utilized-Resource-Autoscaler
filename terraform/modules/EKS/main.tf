@@ -45,6 +45,28 @@ resource "aws_eks_access_policy_association" "admin" {
   depends_on = [aws_eks_access_entry.admin]
 }
 
+# Optional: Add local admin user for testing (comment out in production)
+# Uncomment and set var.local_admin_principal_arn to your IAM user ARN for local kubectl access
+resource "aws_eks_access_entry" "local_admin" {
+  count         = var.local_admin_principal_arn != "" ? 1 : 0
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.local_admin_principal_arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "local_admin" {
+  count         = var.local_admin_principal_arn != "" ? 1 : 0
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.local_admin_principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.local_admin]
+}
+
 resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
   role       = var.cluster_role_name
