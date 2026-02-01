@@ -1,3 +1,28 @@
+terraform {
+  required_version = ">= 1.0.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 4.0"
+    }
+  }
+
+  # Remote backend for CI/CD state persistence
+  # The S3 bucket and DynamoDB table must be created beforehand
+  backend "s3" {
+    bucket         = "aura-terraform-state-125156866057"
+    key            = "dev/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "aura-terraform-locks"
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+
 data "aws_iam_policy_document" "eks_assume_role_policy" {
   statement {
     actions = ["sts:AssumeRole"]

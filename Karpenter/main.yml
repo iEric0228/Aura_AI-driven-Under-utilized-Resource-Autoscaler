@@ -1,3 +1,5 @@
+---
+# Default Provisioner for CPU workloads
 apiVersion: karpenter.sh/v1alpha5
 kind: Provisioner
 metadata:
@@ -6,13 +8,66 @@ spec:
   requirements:
     - key: "node.kubernetes.io/instance-type"
       operator: In
-      values: ["g4dn.xlarge", "g5.xlarge", "p3.2xlarge", "t3.medium", "t3.large", "t3.xlarge"]
+      values: ["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge"]
     - key: "karpenter.sh/capacity-type"
       operator: In
-      values: ["on-demand"]
+      values: ["on-demand", "spot"]
+    - key: "kubernetes.io/arch"
+      operator: In
+      values: ["amd64"]
+  labels:
+    workload-type: cpu
   provider:
     subnetSelector:
       karpenter.sh/discovery: aura-eks-dev
     securityGroupSelector:
       karpenter.sh/discovery: aura-eks-dev
+    # Use EKS-optimized AMI
+    amiFamily: AL2
   ttlSecondsAfterEmpty: 60
+  # Limits to prevent runaway scaling
+  limits:
+    resources:
+      cpu: 100
+      memory: 200Gi
+---
+# GPU Provisioner for NVIDIA GPU workloads
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: gpu
+spec:
+  # Taints ensure only GPU workloads schedule on expensive GPU nodes
+  taints:
+    - key: nvidia.com/gpu
+      value: "true"
+      effect: NoSchedule
+  requirements:
+    - key: "node.kubernetes.io/instance-type"
+      operator: In
+      values: ["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge", "g5.2xlarge"]
+    - key: "karpenter.sh/capacity-type"
+      operator: In
+      values: ["on-demand", "spot"]
+    - key: "kubernetes.io/arch"
+      operator: In
+      values: ["amd64"]
+  labels:
+    workload-type: gpu
+    nvidia.com/gpu: "true"
+  provider:
+    subnetSelector:
+      karpenter.sh/discovery: aura-eks-dev
+    securityGroupSelector:
+      karpenter.sh/discovery: aura-eks-dev
+    # CRITICAL: Use EKS-optimized AMI with GPU support (includes NVIDIA drivers)
+    amiFamily: AL2
+    # Launch template can be used for more control over GPU AMI
+    # launchTemplate: gpu-launch-template
+  ttlSecondsAfterEmpty: 60
+  # Conservative GPU limits (GPU instances are expensive)
+  limits:
+    resources:
+      cpu: 32
+      memory: 128Gi
+      nvidia.com/gpu: 4

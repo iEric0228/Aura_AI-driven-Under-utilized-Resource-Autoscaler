@@ -206,36 +206,39 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
     kubectl get pods -n karpenter
     
     # Check if Karpenter is actually running (not just installed)
-    KARPENTER_READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.containerStatuses[*].ready}' 2>/dev/null | grep -c true || echo "0")
-    if [ "$KARPENTER_READY" -lt 2 ]; then
+    KARPENTER_PHASE=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+    if [ "$KARPENTER_PHASE" != "Running" ]; then
       echo ""
-      echo "⚠️ Karpenter pods are not fully ready. Checking logs..."
-      kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter -c controller --tail=20 2>/dev/null || true
+      echo "⚠️ Karpenter pods are not fully ready (phase: $KARPENTER_PHASE). Checking logs..."
+      kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=20 2>/dev/null || true
       
       echo ""
       read -p "Karpenter may need reconfiguration. Upgrade Karpenter with correct settings? (y/N): " UPGRADE_KARPENTER
       if [[ "$UPGRADE_KARPENTER" =~ ^[Yy]$ ]]; then
         echo ""
-        echo ">>> Upgrading Karpenter with correct settings..."
+        echo ">>> Upgrading Karpenter v0.27.5 with correct settings..."
         helm upgrade karpenter karpenter/karpenter \
           --namespace karpenter \
-          --version 0.16.3 \
-          --set clusterName="$CLUSTER_NAME" \
-          --set clusterEndpoint="$CLUSTER_ENDPOINT" \
+          --version 0.27.5 \
+          --set settings.aws.clusterName="$CLUSTER_NAME" \
+          --set settings.aws.clusterEndpoint="$CLUSTER_ENDPOINT" \
           --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
-          --set aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
+          --set settings.aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
+          --set settings.aws.interruptionQueueName="" \
           --set replicas=1 \
           --set controller.resources.requests.cpu=200m \
           --set controller.resources.requests.memory=256Mi \
           --set controller.resources.limits.cpu=500m \
-          --set controller.resources.limits.memory=512Mi
+          --set controller.resources.limits.memory=512Mi \
+          --wait --timeout 3m
         
         echo ""
         echo ">>> Waiting for Karpenter to be ready (up to 60s)..."
         sleep 10
         for i in {1..5}; do
-          READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.containerStatuses[*].ready}' 2>/dev/null | grep -c true || echo "0")
-          if [ "$READY" -ge 2 ]; then
+          # v0.27.5 has a single container per pod
+          READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+          if [ "$READY" = "Running" ]; then
             echo "✅ Karpenter is now ready!"
             break
           fi
@@ -257,7 +260,7 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       helm repo update
       
       echo ""
-      echo ">>> Installing Karpenter with settings:"
+      echo ">>> Installing Karpenter v0.27.5 with settings:"
       echo "    Cluster Name: $CLUSTER_NAME"
       echo "    Cluster Endpoint: $CLUSTER_ENDPOINT"
       echo "    IAM Role ARN: $KARPENTER_ROLE_ARN"
@@ -265,29 +268,31 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       
       helm install karpenter karpenter/karpenter \
         --namespace karpenter --create-namespace \
-        --version 0.16.3 \
-        --set clusterName="$CLUSTER_NAME" \
-        --set clusterEndpoint="$CLUSTER_ENDPOINT" \
+        --version 0.27.5 \
+        --set settings.aws.clusterName="$CLUSTER_NAME" \
+        --set settings.aws.clusterEndpoint="$CLUSTER_ENDPOINT" \
         --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
-        --set aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
+        --set settings.aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
+        --set settings.aws.interruptionQueueName="" \
         --set replicas=1 \
         --set controller.resources.requests.cpu=200m \
         --set controller.resources.requests.memory=256Mi \
         --set controller.resources.limits.cpu=500m \
-        --set controller.resources.limits.memory=512Mi
+        --set controller.resources.limits.memory=512Mi \
+        --wait --timeout 3m
       
       echo ""
       echo ">>> Waiting for Karpenter to be ready (up to 90s)..."
-      sleep 15
-      for i in {1..8}; do
-        READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.containerStatuses[*].ready}' 2>/dev/null | grep -c true || echo "0")
-        if [ "$READY" -ge 2 ]; then
+      # --wait flag should handle this, just verify
+      for i in {1..6}; do
+        READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+        if [ "$READY" = "Running" ]; then
           echo "✅ Karpenter is ready!"
           break
         fi
-        echo "  Waiting... ($i/8)"
+        echo "  Waiting... ($i/6)"
         kubectl get pods -n karpenter
-        sleep 10
+        sleep 15
       done
       
       # Apply the Karpenter provisioner
