@@ -216,15 +216,14 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       read -p "Karpenter may need reconfiguration. Upgrade Karpenter with correct settings? (y/N): " UPGRADE_KARPENTER
       if [[ "$UPGRADE_KARPENTER" =~ ^[Yy]$ ]]; then
         echo ""
-        echo ">>> Upgrading Karpenter v0.27.5 with correct settings..."
-        helm upgrade karpenter karpenter/karpenter \
+        echo ">>> Upgrading Karpenter v0.37.0 with correct settings..."
+        helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
           --namespace karpenter \
-          --version 0.27.5 \
-          --set settings.aws.clusterName="$CLUSTER_NAME" \
-          --set settings.aws.clusterEndpoint="$CLUSTER_ENDPOINT" \
+          --version 0.37.0 \
+          --set "settings.clusterName=$CLUSTER_NAME" \
+          --set "settings.clusterEndpoint=$CLUSTER_ENDPOINT" \
           --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
-          --set settings.aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
-          --set settings.aws.interruptionQueueName="" \
+          --set "settings.interruptionQueue=" \
           --set replicas=1 \
           --set controller.resources.requests.cpu=200m \
           --set controller.resources.requests.memory=256Mi \
@@ -249,31 +248,26 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       fi
     fi
     
-    kubectl get provisioner 2>/dev/null || echo "No provisioners found yet"
+    kubectl get nodepools 2>/dev/null || echo "No NodePools found yet"
+    kubectl get ec2nodeclasses 2>/dev/null || echo "No EC2NodeClasses found yet"
   else
     echo "⚠️ Karpenter is not installed."
     read -p "Install Karpenter now? (y/N): " INSTALL_KARPENTER
     if [[ "$INSTALL_KARPENTER" =~ ^[Yy]$ ]]; then
       echo ""
-      echo ">>> Adding Karpenter Helm repo..."
-      helm repo add karpenter https://charts.karpenter.sh || true
-      helm repo update
-      
-      echo ""
-      echo ">>> Installing Karpenter v0.27.5 with settings:"
+      echo ">>> Installing Karpenter v0.37.0 with settings:"
       echo "    Cluster Name: $CLUSTER_NAME"
       echo "    Cluster Endpoint: $CLUSTER_ENDPOINT"
       echo "    IAM Role ARN: $KARPENTER_ROLE_ARN"
-      echo "    Instance Profile: $INSTANCE_PROFILE"
       
-      helm install karpenter karpenter/karpenter \
+      # Use OCI registry (charts.karpenter.sh is deprecated)
+      helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
         --namespace karpenter --create-namespace \
-        --version 0.27.5 \
-        --set settings.aws.clusterName="$CLUSTER_NAME" \
-        --set settings.aws.clusterEndpoint="$CLUSTER_ENDPOINT" \
+        --version 0.37.0 \
+        --set "settings.clusterName=$CLUSTER_NAME" \
+        --set "settings.clusterEndpoint=$CLUSTER_ENDPOINT" \
         --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
-        --set settings.aws.defaultInstanceProfile="$INSTANCE_PROFILE" \
-        --set settings.aws.interruptionQueueName="" \
+        --set "settings.interruptionQueue=" \
         --set replicas=1 \
         --set controller.resources.requests.cpu=200m \
         --set controller.resources.requests.memory=256Mi \
@@ -295,16 +289,17 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
         sleep 15
       done
       
-      # Apply the Karpenter provisioner
+      # Apply the Karpenter NodePool configuration
       echo ""
-      echo ">>> Applying Karpenter Provisioner..."
+      echo ">>> Applying Karpenter NodePool configuration..."
       KARPENTER_DIR="$SCRIPT_DIR/../Karpenter"
       if [ -f "$KARPENTER_DIR/main.yml" ]; then
         kubectl apply -f "$KARPENTER_DIR/main.yml"
-        echo "✅ Karpenter Provisioner applied"
-        kubectl get provisioner
+        echo "✅ Karpenter NodePools and EC2NodeClasses applied"
+        kubectl get nodepools
+        kubectl get ec2nodeclasses
       else
-        echo "⚠️ Karpenter provisioner file not found at $KARPENTER_DIR/main.yml"
+        echo "⚠️ Karpenter config file not found at $KARPENTER_DIR/main.yml"
       fi
     else
       echo "Skipping Karpenter installation."

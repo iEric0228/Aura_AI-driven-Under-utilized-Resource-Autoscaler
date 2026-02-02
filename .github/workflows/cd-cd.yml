@@ -228,27 +228,29 @@ jobs:
       - name: Deploy Karpenter
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          # Use Karpenter v0.27.5 - last stable version supporting v1alpha5 Provisioner API
-          # with improved GPU instance detection and stability
-          helm repo add karpenter https://charts.karpenter.sh
-          helm repo update
+          # Karpenter v0.37.0 - uses OCI registry (public.ecr.aws/karpenter)
+          # Supports v1beta1 API (NodePool/EC2NodeClass) - more stable than v1alpha5
+          KARPENTER_VERSION="0.37.0"
+          
           CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
           CLUSTER_ENDPOINT=$(jq -r .cluster_endpoint.value tf-outputs.json)
           KARPENTER_ROLE_ARN=$(jq -r .karpenter_controller_role_arn.value tf-outputs.json)
           INSTANCE_PROFILE=$(jq -r .node_instance_profile_name.value tf-outputs.json)
-          echo "Installing Karpenter v0.27.5 with:"
+          
+          echo "Installing Karpenter v${KARPENTER_VERSION} with:"
           echo "  Cluster Name: $CLUSTER_NAME"
           echo "  Cluster Endpoint: $CLUSTER_ENDPOINT"
           echo "  Role ARN: $KARPENTER_ROLE_ARN"
           echo "  Instance Profile: $INSTANCE_PROFILE"
-          helm upgrade --install karpenter karpenter/karpenter \
+          
+          # Use OCI registry for Karpenter (charts.karpenter.sh is deprecated)
+          helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
             --namespace karpenter --create-namespace \
-            --version 0.27.5 \
-            --set settings.aws.clusterName=$CLUSTER_NAME \
-            --set settings.aws.clusterEndpoint=$CLUSTER_ENDPOINT \
+            --version "${KARPENTER_VERSION}" \
+            --set "settings.clusterName=$CLUSTER_NAME" \
+            --set "settings.clusterEndpoint=$CLUSTER_ENDPOINT" \
             --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
-            --set settings.aws.defaultInstanceProfile=$INSTANCE_PROFILE \
-            --set settings.aws.interruptionQueueName="" \
+            --set "settings.interruptionQueue=" \
             --set replicas=1 \
             --set controller.resources.requests.cpu=200m \
             --set controller.resources.requests.memory=256Mi \
@@ -288,13 +290,17 @@ jobs:
       - name: Apply Karpenter Provisioners
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          echo "Applying Karpenter Provisioners (CPU + GPU)..."
+          echo "Applying Karpenter NodePools and EC2NodeClasses (CPU + GPU)..."
           kubectl apply -f ./Karpenter/main.yml
-          echo "Provisioners applied:"
-          kubectl get provisioners
           echo ""
-          echo "Provisioner details:"
-          kubectl describe provisioners
+          echo "EC2NodeClasses:"
+          kubectl get ec2nodeclasses
+          echo ""
+          echo "NodePools:"
+          kubectl get nodepools
+          echo ""
+          echo "NodePool details:"
+          kubectl describe nodepools
         continue-on-error: false
 
       - name: Deploy App/Job
@@ -426,7 +432,8 @@ jobs:
           # Collect cluster and node information
           kubectl get nodes -o json > nodes.json 2>/dev/null || echo "[]" > nodes.json
           kubectl get pods --all-namespaces -o json > pods.json 2>/dev/null || echo "[]" > pods.json
-          kubectl get provisioner -o json > provisioners.json 2>/dev/null || echo "[]" > provisioners.json
+          kubectl get nodepools -o json > nodepools.json 2>/dev/null || echo "[]" > nodepools.json
+          kubectl get ec2nodeclasses -o json > ec2nodeclasses.json 2>/dev/null || echo "[]" > ec2nodeclasses.json
           kubectl get events --all-namespaces --sort-by='.lastTimestamp' > events.txt 2>/dev/null || echo "No events found" > events.txt
           kubectl get pods -n karpenter -o json > karpenter-pods.json 2>/dev/null || echo "[]" > karpenter-pods.json
         continue-on-error: true
@@ -512,12 +519,12 @@ jobs:
             echo "\`\`\`" >> summary.md
             echo "" >> summary.md
             
-            # Provisioner Status
-            if [ -f provisioners.json ] && [ "$(jq '.items | length' provisioners.json 2>/dev/null || echo 0)" -gt 0 ]; then
-              echo "### Provisioner Configuration" >> summary.md
+            # NodePool Status (v1beta1 API)
+            if [ -f nodepools.json ] && [ "$(jq '.items | length' nodepools.json 2>/dev/null || echo 0)" -gt 0 ]; then
+              echo "### NodePool Configuration" >> summary.md
               echo "" >> summary.md
               echo "\`\`\`yaml" >> summary.md
-              kubectl get provisioner -o yaml 2>/dev/null || echo "Unable to retrieve provisioner" >> summary.md
+              kubectl get nodepools -o yaml 2>/dev/null || echo "Unable to retrieve nodepools" >> summary.md
               echo "\`\`\`" >> summary.md
               echo "" >> summary.md
             fi
@@ -669,7 +676,8 @@ jobs:
             gpu-job-skipped.txt
             nodes.json
             pods.json
-            provisioners.json
+            nodepools.json
+            ec2nodeclasses.json
             karpenter-pods.json
             events.txt
             job-logs.txt

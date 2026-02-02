@@ -1,73 +1,104 @@
 ---
-# Default Provisioner for CPU workloads
-apiVersion: karpenter.sh/v1alpha5
-kind: Provisioner
+# EC2NodeClass defines the AWS-specific configuration for nodes
+# This replaces the provider block from v1alpha5 Provisioner
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  requirements:
-    - key: "node.kubernetes.io/instance-type"
-      operator: In
-      values: ["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge"]
-    - key: "karpenter.sh/capacity-type"
-      operator: In
-      values: ["on-demand", "spot"]
-    - key: "kubernetes.io/arch"
-      operator: In
-      values: ["amd64"]
-  labels:
-    workload-type: cpu
-  provider:
-    subnetSelector:
-      karpenter.sh/discovery: aura-eks-dev
-    securityGroupSelector:
-      karpenter.sh/discovery: aura-eks-dev
-    # Use EKS-optimized AMI
-    amiFamily: AL2
-  ttlSecondsAfterEmpty: 60
-  # Limits to prevent runaway scaling
-  limits:
-    resources:
-      cpu: 100
-      memory: 200Gi
+  amiFamily: AL2
+  role: aura-eks-node-role  # IAM role for the nodes (not instance profile)
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: aura-eks-dev
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: aura-eks-dev
+  tags:
+    Name: karpenter-node
+    karpenter.sh/discovery: aura-eks-dev
 ---
-# GPU Provisioner for NVIDIA GPU workloads
-apiVersion: karpenter.sh/v1alpha5
-kind: Provisioner
+# GPU EC2NodeClass - uses GPU-optimized AMI
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
 metadata:
   name: gpu
 spec:
-  # Taints ensure only GPU workloads schedule on expensive GPU nodes
-  taints:
-    - key: nvidia.com/gpu
-      value: "true"
-      effect: NoSchedule
-  requirements:
-    - key: "node.kubernetes.io/instance-type"
-      operator: In
-      values: ["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge", "g5.2xlarge"]
-    - key: "karpenter.sh/capacity-type"
-      operator: In
-      values: ["on-demand", "spot"]
-    - key: "kubernetes.io/arch"
-      operator: In
-      values: ["amd64"]
-  labels:
-    workload-type: gpu
-    nvidia.com/gpu: "true"
-  provider:
-    subnetSelector:
-      karpenter.sh/discovery: aura-eks-dev
-    securityGroupSelector:
-      karpenter.sh/discovery: aura-eks-dev
-    # CRITICAL: Use EKS-optimized AMI with GPU support (includes NVIDIA drivers)
-    amiFamily: AL2
-    # Launch template can be used for more control over GPU AMI
-    # launchTemplate: gpu-launch-template
-  ttlSecondsAfterEmpty: 60
-  # Conservative GPU limits (GPU instances are expensive)
+  amiFamily: AL2  # AL2 GPU AMI will be auto-selected for GPU instances
+  role: aura-eks-node-role
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: aura-eks-dev
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: aura-eks-dev
+  tags:
+    Name: karpenter-gpu-node
+    karpenter.sh/discovery: aura-eks-dev
+---
+# Default NodePool for CPU workloads
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: cpu
+    spec:
+      nodeClassRef:
+        name: default
+      requirements:
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
   limits:
-    resources:
-      cpu: 32
-      memory: 128Gi
-      nvidia.com/gpu: 4
+    cpu: 100
+    memory: 200Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 60s
+---
+# GPU NodePool for NVIDIA GPU workloads
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  template:
+    metadata:
+      labels:
+        workload-type: gpu
+        nvidia.com/gpu: "true"
+    spec:
+      nodeClassRef:
+        name: gpu
+      # Taints ensure only GPU workloads schedule on expensive GPU nodes
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: "node.kubernetes.io/instance-type"
+          operator: In
+          values: ["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge", "g5.2xlarge"]
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand", "spot"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+  limits:
+    cpu: 32
+    memory: 128Gi
+    nvidia.com/gpu: 4
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 60s
