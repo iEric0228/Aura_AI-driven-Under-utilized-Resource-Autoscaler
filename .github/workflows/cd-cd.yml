@@ -291,7 +291,17 @@ jobs:
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Applying Karpenter NodePools and EC2NodeClasses (CPU + GPU)..."
-          kubectl apply -f ./Karpenter/main.yml
+          
+          # Set variables for envsubst
+          export CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
+          export INSTANCE_PROFILE=$(jq -r .node_instance_profile_name.value tf-outputs.json)
+          
+          echo "Using:"
+          echo "  CLUSTER_NAME: $CLUSTER_NAME"
+          echo "  INSTANCE_PROFILE: $INSTANCE_PROFILE"
+          
+          # Apply with variable substitution
+          envsubst < ./Karpenter/main.yml | kubectl apply -f -
           echo ""
           echo "EC2NodeClasses:"
           kubectl get ec2nodeclasses
@@ -334,52 +344,87 @@ jobs:
           echo "Monitoring Karpenter provisioning for GPU node..."
           echo "This may take 3-5 minutes for GPU instance to launch..."
           
-          TIMEOUT=300
+          TIMEOUT=420
           ELAPSED=0
           GPU_NODE_FOUND=false
           
           while [ $ELAPSED -lt $TIMEOUT ]; do
+            # Check NodeClaims first (shows provisioning status)
+            echo ""
+            echo "[$ELAPSED s] === NodeClaim Status ==="
+            kubectl get nodeclaims -o wide 2>/dev/null || true
+            
+            # Check for any issues with NodeClaims
+            NODECLAIM_STATUS=$(kubectl get nodeclaims -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+            if echo "$NODECLAIM_STATUS" | grep -q "False"; then
+              echo "⚠️ NodeClaim has issues:"
+              kubectl describe nodeclaims 2>/dev/null | grep -A 5 "Status:" || true
+            fi
+            
             # Check for GPU nodes
             GPU_NODES=$(kubectl get nodes -l workload-type=gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
             if [ "$GPU_NODES" -gt 0 ]; then
-              echo "✅ GPU node provisioned!"
+              echo "✅ GPU node provisioned and joined cluster!"
               kubectl get nodes -l workload-type=gpu -o wide
               GPU_NODE_FOUND=true
               break
             fi
             
             # Check Karpenter logs for provisioning activity
-            echo "[$ELAPSED s] Waiting for GPU node... Checking Karpenter status..."
-            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=5 2>/dev/null | grep -i "provision\|launch\|gpu\|g4dn\|g5" || true
+            echo ""
+            echo "=== Karpenter Activity ==="
+            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=10 2>/dev/null | grep -i "provision\|launch\|created\|registered\|error\|failed" || echo "No relevant logs"
             
             # Show pending pods
+            echo ""
+            echo "=== GPU Test Pod ==="
             kubectl get pods -n default -l job-name=gpu-test-job -o wide 2>/dev/null || true
             
-            sleep 15
-            ELAPSED=$((ELAPSED + 15))
+            sleep 20
+            ELAPSED=$((ELAPSED + 20))
           done
           
           if [ "$GPU_NODE_FOUND" = false ]; then
+            echo ""
             echo "⚠️ GPU node was not provisioned within timeout"
             echo ""
-            echo "=== Karpenter Logs (last 50 lines) ==="
-            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=50 2>/dev/null || true
+            echo "=== DIAGNOSTIC INFORMATION ==="
             echo ""
-            echo "=== Provisioner Status ==="
-            kubectl get provisioners -o yaml 2>/dev/null || true
+            echo "--- 1. NodeClaim Details ---"
+            kubectl describe nodeclaims 2>/dev/null || true
             echo ""
-            echo "=== Pending Pods ==="
+            echo "--- 2. EC2NodeClass Status ---"
+            kubectl describe ec2nodeclasses 2>/dev/null || true
+            echo ""
+            echo "--- 3. Karpenter Controller Logs (last 150 lines) ---"
+            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=150 2>/dev/null || true
+            echo ""
+            echo "--- 4. Pending Pod Events ---"
             kubectl describe pod -n default -l job-name=gpu-test-job 2>/dev/null | grep -A 20 "Events:" || true
+            echo ""
+            echo "--- 5. AWS GPU Service Quotas (informational) ---"
+            echo "Note: GPU instances (g4dn, g5) require service quota approval"
+            aws service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA --region $AWS_REGION 2>/dev/null | jq -r '"Running On-Demand G and VT instances: \(.Quota.Value) vCPUs"' || echo "Could not retrieve quota"
+            echo ""
+            echo "--- 6. Common Failure Causes ---"
+            echo "  - AWS Service Quota: GPU instances require explicit quota (default is 0)"
+            echo "  - Capacity: GPU instances have limited availability in some AZs"
+            echo "  - IAM: Node role must have EC2_LINUX access entry in EKS"
+            echo "  - Network: Subnets must have internet access for node bootstrap"
+            echo ""
+            echo "--- 7. EKS Access Entries (verify node role is listed) ---"
+            CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
+            aws eks list-access-entries --cluster-name $CLUSTER_NAME --region $AWS_REGION 2>/dev/null || true
           fi
         continue-on-error: true
 
       - name: Wait for GPU Test Job Completion
         if: ${{ github.event.inputs.action == 'deploy-and-destroy' }}
         run: |
-          echo "Waiting for GPU test job completion (timeout: 180s after node ready)..."
+          echo "Waiting for GPU test job completion (timeout: 300s)..."
           
-          # Give it time after potential node provisioning
-          if kubectl wait --for=condition=complete --timeout=180s job/gpu-test-job -n default 2>/dev/null; then
+          # Give it more time - GPU node startup can be slow
+          if kubectl wait --for=condition=complete --timeout=300s job/gpu-test-job -n default 2>/dev/null; then
             echo "✅ GPU test job completed successfully!"
             echo ""
             echo "=== GPU Job Output ==="

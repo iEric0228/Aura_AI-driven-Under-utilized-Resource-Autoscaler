@@ -294,7 +294,11 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       echo ">>> Applying Karpenter NodePool configuration..."
       KARPENTER_DIR="$SCRIPT_DIR/../Karpenter"
       if [ -f "$KARPENTER_DIR/main.yml" ]; then
-        kubectl apply -f "$KARPENTER_DIR/main.yml"
+        # Use envsubst to substitute environment variables
+        export INSTANCE_PROFILE
+        export CLUSTER_NAME
+        echo "Applying with CLUSTER_NAME=$CLUSTER_NAME, INSTANCE_PROFILE=$INSTANCE_PROFILE"
+        envsubst < "$KARPENTER_DIR/main.yml" | kubectl apply -f -
         echo "✅ Karpenter NodePools and EC2NodeClasses applied"
         kubectl get nodepools
         kubectl get ec2nodeclasses

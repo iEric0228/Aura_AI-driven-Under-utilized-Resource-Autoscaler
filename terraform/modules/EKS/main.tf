@@ -67,6 +67,14 @@ resource "aws_eks_access_policy_association" "local_admin" {
   depends_on = [aws_eks_access_entry.local_admin]
 }
 
+# Access entry for Karpenter-provisioned nodes
+# This allows nodes launched by Karpenter to authenticate and join the cluster
+resource "aws_eks_access_entry" "node" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.node_role_arn
+  type          = "EC2_LINUX"
+}
+
 resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
   role       = var.cluster_role_name
