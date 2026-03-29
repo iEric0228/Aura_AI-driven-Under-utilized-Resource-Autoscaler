@@ -12,6 +12,11 @@ variable "availability_zones" {
 variable "cidr_block" {
   description = "The CIDR block for the VPC"
   type        = string
+
+  validation {
+    condition     = can(cidrhost(var.cidr_block, 0))
+    error_message = "cidr_block must be a valid CIDR notation (e.g., 10.0.0.0/16)."
+  }
 }
 
 variable "public_subnets" {
@@ -39,4 +44,10 @@ variable "enable_dns_hostnames" {
 variable "name" {
   description = "The name of the VPC"
   type        = string
+}
+
+variable "enable_ha_nat" {
+  description = "Enable HA NAT gateways (one per AZ). When false, a single NAT gateway is used."
+  type        = bool
+  default     = false
 }

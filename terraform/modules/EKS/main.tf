@@ -6,11 +6,16 @@ resource "aws_eks_cluster" "this" {
   }
 
   role_arn = var.cluster_role_arn
-  version  = "1.31"
+  version  = var.kubernetes_version
 
   vpc_config {
-    subnet_ids = var.subnet_ids
+    subnet_ids              = var.subnet_ids
+    endpoint_private_access = true
+    endpoint_public_access  = true
+    public_access_cidrs     = var.endpoint_public_access_cidrs
   }
+
+  enabled_cluster_log_types = var.cluster_log_types
 
   depends_on = [
     aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy,
@@ -27,16 +32,15 @@ resource "aws_ec2_tag" "cluster_security_group" {
 
 resource "aws_eks_access_entry" "admin" {
   cluster_name  = aws_eks_cluster.this.name
-  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/github-OICD"
+  principal_arn = var.admin_principal_arn
   type          = "STANDARD"
 }
 
 resource "aws_eks_access_policy_association" "admin" {
   cluster_name  = aws_eks_cluster.this.name
-    principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/github-OICD"
+  principal_arn = var.admin_principal_arn
 
   policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-  
 
   access_scope {
     type = "cluster"
@@ -46,7 +50,6 @@ resource "aws_eks_access_policy_association" "admin" {
 }
 
 # Optional: Add local admin user for testing (comment out in production)
-# Uncomment and set var.local_admin_principal_arn to your IAM user ARN for local kubectl access
 resource "aws_eks_access_entry" "local_admin" {
   count         = var.local_admin_principal_arn != "" ? 1 : 0
   cluster_name  = aws_eks_cluster.this.name
@@ -68,7 +71,6 @@ resource "aws_eks_access_policy_association" "local_admin" {
 }
 
 # Access entry for Karpenter-provisioned nodes
-# This allows nodes launched by Karpenter to authenticate and join the cluster
 resource "aws_eks_access_entry" "node" {
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = var.node_role_arn
@@ -117,5 +119,3 @@ resource "aws_eks_node_group" "this" {
     aws_iam_role_policy_attachment.node_policies
   ]
 }
-
-data "aws_caller_identity" "current" {}

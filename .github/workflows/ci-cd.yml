@@ -4,7 +4,11 @@ permissions:
   id-token: write
   contents: read
 
-on: 
+concurrency:
+  group: aura-eks-deploy
+  cancel-in-progress: false
+
+on:
   workflow_dispatch:
     inputs:
       action:
@@ -15,7 +19,7 @@ on:
         options:
           - deploy-and-destroy
           - deploy
-          - destroy 
+          - destroy
       job_name:
         description: "Kubernetes Job name to wait for"
         required: false
@@ -30,16 +34,17 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
-    steps: 
-      - name: Checkout 
+      KARPENTER_VERSION: "0.37.0"
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::125156866057:role/github-OICD
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -49,23 +54,23 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           BUCKET_NAME="aura-terraform-state-${ACCOUNT_ID}"
           DYNAMODB_TABLE="aura-terraform-locks"
-          
+
           echo "Checking/creating Terraform backend resources..."
           echo "  S3 Bucket: $BUCKET_NAME"
           echo "  DynamoDB Table: $DYNAMODB_TABLE"
-          
+
           # Create S3 bucket if it doesn't exist
           if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "Creating S3 bucket..."
             aws s3api create-bucket \
               --bucket "$BUCKET_NAME" \
               --region "$AWS_REGION" || true
-            
+
             # Enable versioning
             aws s3api put-bucket-versioning \
               --bucket "$BUCKET_NAME" \
               --versioning-configuration Status=Enabled || true
-            
+
             # Enable encryption
             aws s3api put-bucket-encryption \
               --bucket "$BUCKET_NAME" \
@@ -77,7 +82,7 @@ jobs:
                   "BucketKeyEnabled": true
                 }]
               }' || true
-            
+
             # Block public access
             aws s3api put-public-access-block \
               --bucket "$BUCKET_NAME" \
@@ -87,12 +92,12 @@ jobs:
                 "BlockPublicPolicy": true,
                 "RestrictPublicBuckets": true
               }' || true
-            
-            echo "✅ S3 bucket created and configured"
+
+            echo "S3 bucket created and configured"
           else
-            echo "✅ S3 bucket already exists"
+            echo "S3 bucket already exists"
           fi
-          
+
           # Create DynamoDB table if it doesn't exist
           if ! aws dynamodb describe-table --table-name "$DYNAMODB_TABLE" --region "$AWS_REGION" 2>/dev/null; then
             echo "Creating DynamoDB table..."
@@ -102,12 +107,12 @@ jobs:
               --key-schema AttributeName=LockID,KeyType=HASH \
               --billing-mode PAY_PER_REQUEST \
               --region "$AWS_REGION" || true
-            
+
             # Wait for table to be active
             aws dynamodb wait table-exists --table-name "$DYNAMODB_TABLE" --region "$AWS_REGION"
-            echo "✅ DynamoDB table created"
+            echo "DynamoDB table created"
           else
-            echo "✅ DynamoDB table already exists"
+            echo "DynamoDB table already exists"
           fi
         shell: bash
 
@@ -122,47 +127,41 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           cd ./terraform/environments/dev
           # Import EKS Node Instance Profile if exists in AWS and not in state
-          if aws iam get-instance-profile --instance-profile-name aura-eks-node-role-instance-profile >/dev/null 2>&1; then 
+          if aws iam get-instance-profile --instance-profile-name aura-eks-dev-node-role-instance-profile >/dev/null 2>&1; then
             if ! terraform state list | grep -q "module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile"; then
-              terraform import 'module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile' aura-eks-node-role-instance-profile || true
+              terraform import 'module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile' aura-eks-dev-node-role-instance-profile || true
             fi
-          fi  
+          fi
 
           # Import EKS Cluster Role if exists in AWS and not in state
-          if aws iam get-role --role-name aura-eks-cluster-role >/dev/null 2>&1; then
+          if aws iam get-role --role-name aura-eks-dev-cluster-role >/dev/null 2>&1; then
             if ! terraform state list | grep -q "module.iam_eks.aws_iam_role.eks_cluster_role"; then
-              terraform import 'module.iam_eks.aws_iam_role.eks_cluster_role' aura-eks-cluster-role || true
+              terraform import 'module.iam_eks.aws_iam_role.eks_cluster_role' aura-eks-dev-cluster-role || true
             fi
           fi
 
           # Import EKS Node Role if exists in AWS and not in state
-          if aws iam get-role --role-name aura-eks-node-role >/dev/null 2>&1; then
+          if aws iam get-role --role-name aura-eks-dev-node-role >/dev/null 2>&1; then
             if ! terraform state list | grep -q "module.iam_eks.aws_iam_role.eks_node_role"; then
-              terraform import 'module.iam_eks.aws_iam_role.eks_node_role' aura-eks-node-role || true
+              terraform import 'module.iam_eks.aws_iam_role.eks_node_role' aura-eks-dev-node-role || true
             fi
           fi
 
           # Import Karpenter Controller Policy if exists in AWS and not in state
-          if aws iam get-policy --policy-arn arn:aws:iam::${ACCOUNT_ID}:policy/aura-karpenter-controller-role-policy >/dev/null 2>&1; then
+          if aws iam get-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/aura-eks-dev-karpenter-controller-role-policy" >/dev/null 2>&1; then
             if ! terraform state list | grep -q "module.iam.aws_iam_policy.karpenter_controller_inline"; then
-              terraform import 'module.iam.aws_iam_policy.karpenter_controller_inline' arn:aws:iam::${ACCOUNT_ID}:policy/aura-karpenter-controller-role-policy || true
-            fi
-          fi
-          # Import EKS Node Instance Profile if exists in AWS and not in state
-          if aws iam get-instance-profile --instance-profile-name aura-eks-node-role-instance-profile >/dev/null 2>&1; then 
-            if ! terraform state list | grep -q "module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile"; then
-               terraform import 'module.iam_eks.aws_iam_instance_profile.eks_node_instance_profile' aura-eks-node-role-instance-profile || true
+              terraform import 'module.iam.aws_iam_policy.karpenter_controller_inline' "arn:aws:iam::${ACCOUNT_ID}:policy/aura-eks-dev-karpenter-controller-role-policy" || true
             fi
           fi
         shell: bash
         continue-on-error: true
 
-      - name: Terraform Plan 
+      - name: Terraform Plan
         if: ${{ github.event.inputs.action != 'destroy' }}
         working-directory: ./terraform/environments/dev
         run: terraform plan -out=tfplan
 
-      - name: Terraform Apply 
+      - name: Terraform Apply
         if: ${{ github.event.inputs.action != 'destroy' }}
         working-directory: ./terraform/environments/dev
         run: terraform apply -auto-approve
@@ -224,25 +223,21 @@ jobs:
         run: |
           aws eks update-kubeconfig --region "$AWS_REGION" --name "$(jq -r .cluster_name.value tf-outputs.json)"
         continue-on-error: false
-      
+
       - name: Deploy Karpenter
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          # Karpenter v0.37.0 - uses OCI registry (public.ecr.aws/karpenter)
-          # Supports v1beta1 API (NodePool/EC2NodeClass) - more stable than v1alpha5
-          KARPENTER_VERSION="0.37.0"
-          
           CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
           CLUSTER_ENDPOINT=$(jq -r .cluster_endpoint.value tf-outputs.json)
           KARPENTER_ROLE_ARN=$(jq -r .karpenter_controller_role_arn.value tf-outputs.json)
           INSTANCE_PROFILE=$(jq -r .node_instance_profile_name.value tf-outputs.json)
-          
+
           echo "Installing Karpenter v${KARPENTER_VERSION} with:"
           echo "  Cluster Name: $CLUSTER_NAME"
           echo "  Cluster Endpoint: $CLUSTER_ENDPOINT"
           echo "  Role ARN: $KARPENTER_ROLE_ARN"
           echo "  Instance Profile: $INSTANCE_PROFILE"
-          
+
           # Use OCI registry for Karpenter (charts.karpenter.sh is deprecated)
           helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
             --namespace karpenter --create-namespace \
@@ -263,18 +258,17 @@ jobs:
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Waiting for Karpenter controller pods to be ready..."
-          # Helm --wait should handle this, but double-check
           kubectl rollout status deployment/karpenter -n karpenter --timeout=120s || true
-          
+
           echo "Karpenter deployment status:"
           kubectl get pods -n karpenter -o wide
           kubectl get svc -n karpenter
-          
+
           # Verify Karpenter is responding
           if kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' | grep -q Running; then
-            echo "✅ Karpenter is ready!"
+            echo "Karpenter is ready!"
           else
-            echo "⚠️ Karpenter may not be fully ready, continuing anyway..."
+            echo "Karpenter may not be fully ready, continuing anyway..."
             kubectl describe pods -n karpenter -l app.kubernetes.io/name=karpenter | tail -30 || true
           fi
         continue-on-error: false
@@ -283,23 +277,23 @@ jobs:
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Installing NVIDIA device plugin for GPU node support..."
-          kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.1/nvidia-device-plugin.yml
-          echo "✅ NVIDIA device plugin DaemonSet applied (will run on GPU nodes when provisioned)"
+          kubectl apply -f ./Karpenter/nvidia-device-plugin.yml
+          echo "NVIDIA device plugin DaemonSet applied (will run on GPU nodes when provisioned)"
         continue-on-error: true
 
       - name: Apply Karpenter Provisioners
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Applying Karpenter NodePools and EC2NodeClasses (CPU + GPU)..."
-          
+
           # Set variables for envsubst
           export CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
           export INSTANCE_PROFILE=$(jq -r .node_instance_profile_name.value tf-outputs.json)
-          
+
           echo "Using:"
           echo "  CLUSTER_NAME: $CLUSTER_NAME"
           echo "  INSTANCE_PROFILE: $INSTANCE_PROFILE"
-          
+
           # Apply with variable substitution
           envsubst < ./Karpenter/main.yml | kubectl apply -f -
           echo ""
@@ -313,18 +307,79 @@ jobs:
           kubectl describe nodepools
         continue-on-error: false
 
+      - name: Apply Network Policies
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          echo "Applying network policies..."
+          kubectl apply -f ./Karpenter/network-policy.yml
+          echo "Network policies applied"
+        continue-on-error: true
+
       - name: Deploy App/Job
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Deploying CPU test job..."
           kubectl apply -f ./Karpenter/app-job.yml
-          echo "✅ CPU job deployed"
+          echo "CPU job deployed"
         continue-on-error: false
+
+      - name: Check GPU Service Quota
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        id: gpu_quota
+        run: |
+          echo "Checking AWS GPU service quotas..."
+
+          # Check On-Demand G and VT instances quota
+          ONDEMAND_QUOTA=$(aws service-quotas get-service-quota \
+            --service-code ec2 \
+            --quota-code L-DB2E81BA \
+            --region $AWS_REGION 2>/dev/null | jq -r '.Quota.Value // 0' || echo "0")
+
+          # Check Spot G and VT instances quota
+          SPOT_QUOTA=$(aws service-quotas get-service-quota \
+            --service-code ec2 \
+            --quota-code L-3819A6DF \
+            --region $AWS_REGION 2>/dev/null | jq -r '.Quota.Value // 0' || echo "0")
+
+          echo "GPU Instance Quotas:"
+          echo "  On-Demand G/VT instances: $ONDEMAND_QUOTA vCPUs"
+          echo "  Spot G/VT instances: $SPOT_QUOTA vCPUs"
+
+          # g4dn.xlarge needs 4 vCPUs
+          MIN_VCPUS_NEEDED=4
+
+          if [ "$ONDEMAND_QUOTA" = "0" ] && [ "$SPOT_QUOTA" = "0" ]; then
+            echo ""
+            echo "WARNING: GPU quota is 0 - GPU test will be skipped"
+            echo "To enable GPU testing, request a quota increase:"
+            echo "  https://console.aws.amazon.com/servicequotas/home/services/ec2/quotas"
+            echo "  Search for: 'Running On-Demand G and VT instances'"
+            echo "  Request at least 4 vCPUs for g4dn.xlarge"
+            echo "gpu_available=false" >> $GITHUB_OUTPUT
+          elif [ "${ONDEMAND_QUOTA%.*}" -lt "$MIN_VCPUS_NEEDED" ] && [ "${SPOT_QUOTA%.*}" -lt "$MIN_VCPUS_NEEDED" ]; then
+            echo ""
+            echo "WARNING: GPU quota too low (need $MIN_VCPUS_NEEDED vCPUs for g4dn.xlarge)"
+            echo "gpu_available=false" >> $GITHUB_OUTPUT
+          else
+            echo ""
+            echo "GPU quota sufficient for testing"
+            echo "gpu_available=true" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
 
       - name: Deploy GPU Test Job
         if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
           echo "Deploying GPU test job..."
+
+          # Check if GPU quota is available
+          if [ "${{ steps.gpu_quota.outputs.gpu_available }}" = "false" ]; then
+            echo "Skipping GPU test job deployment - GPU quota is 0 or insufficient"
+            echo "GPU test skipped - quota unavailable" > gpu-job-logs.txt
+            echo "SKIP_GPU_TEST=true" >> $GITHUB_ENV
+            exit 0
+          fi
+
           echo "Note: GPU job requires Karpenter to provision a GPU node (g4dn/g5)"
           echo "This tests the full GPU autoscaling flow:"
           echo "  1. GPU job requests nvidia.com/gpu resource"
@@ -341,97 +396,121 @@ jobs:
       - name: Monitor GPU Node Provisioning
         if: ${{ github.event.inputs.action == 'deploy-and-destroy' }}
         run: |
+          # Skip if GPU test was skipped due to quota
+          if [ "$SKIP_GPU_TEST" = "true" ]; then
+            echo "Skipping GPU monitoring - GPU test was skipped due to insufficient quota"
+            exit 0
+          fi
+
           echo "Monitoring Karpenter provisioning for GPU node..."
           echo "This may take 3-5 minutes for GPU instance to launch..."
-          
+
           TIMEOUT=420
           ELAPSED=0
           GPU_NODE_FOUND=false
-          
+
           while [ $ELAPSED -lt $TIMEOUT ]; do
             # Check NodeClaims first (shows provisioning status)
             echo ""
             echo "[$ELAPSED s] === NodeClaim Status ==="
             kubectl get nodeclaims -o wide 2>/dev/null || true
-            
+
             # Check for any issues with NodeClaims
             NODECLAIM_STATUS=$(kubectl get nodeclaims -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
             if echo "$NODECLAIM_STATUS" | grep -q "False"; then
-              echo "⚠️ NodeClaim has issues:"
+              echo "NodeClaim has issues:"
               kubectl describe nodeclaims 2>/dev/null | grep -A 5 "Status:" || true
             fi
-            
+
             # Check for GPU nodes
             GPU_NODES=$(kubectl get nodes -l workload-type=gpu --no-headers 2>/dev/null | wc -l | tr -d ' ')
             if [ "$GPU_NODES" -gt 0 ]; then
-              echo "✅ GPU node provisioned and joined cluster!"
+              echo "GPU node provisioned and joined cluster!"
               kubectl get nodes -l workload-type=gpu -o wide
               GPU_NODE_FOUND=true
               break
             fi
-            
+
             # Check Karpenter logs for provisioning activity
             echo ""
             echo "=== Karpenter Activity ==="
             kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=10 2>/dev/null | grep -i "provision\|launch\|created\|registered\|error\|failed" || echo "No relevant logs"
-            
+
             # Show pending pods
             echo ""
             echo "=== GPU Test Pod ==="
             kubectl get pods -n default -l job-name=gpu-test-job -o wide 2>/dev/null || true
-            
+
             sleep 20
             ELAPSED=$((ELAPSED + 20))
           done
-          
+
           if [ "$GPU_NODE_FOUND" = false ]; then
             echo ""
-            echo "⚠️ GPU node was not provisioned within timeout"
+            echo "GPU node was not provisioned within timeout"
             echo ""
             echo "=== DIAGNOSTIC INFORMATION ==="
             echo ""
             echo "--- 1. NodeClaim Details ---"
-            kubectl describe nodeclaims 2>/dev/null || true
+            kubectl get nodeclaims -o yaml 2>/dev/null || true
             echo ""
             echo "--- 2. EC2NodeClass Status ---"
             kubectl describe ec2nodeclasses 2>/dev/null || true
             echo ""
-            echo "--- 3. Karpenter Controller Logs (last 150 lines) ---"
-            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=150 2>/dev/null || true
+            echo "--- 3. Karpenter Controller Logs ---"
+            echo "Searching for errors, launch failures, and capacity issues..."
+            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=300 2>/dev/null | grep -i "error\|failed\|insufficient\|capacity\|launch\|quota\|limit\|denied" || echo "No error patterns found"
+            echo ""
+            echo "--- 3b. Full Karpenter logs (last 200 lines) ---"
+            kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=200 2>/dev/null || true
             echo ""
             echo "--- 4. Pending Pod Events ---"
             kubectl describe pod -n default -l job-name=gpu-test-job 2>/dev/null | grep -A 20 "Events:" || true
             echo ""
-            echo "--- 5. AWS GPU Service Quotas (informational) ---"
-            echo "Note: GPU instances (g4dn, g5) require service quota approval"
-            aws service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA --region $AWS_REGION 2>/dev/null | jq -r '"Running On-Demand G and VT instances: \(.Quota.Value) vCPUs"' || echo "Could not retrieve quota"
+            echo "--- 5. AWS GPU Service Quotas ---"
+            echo "Checking GPU instance quotas (g4dn, g5 require explicit quota approval)..."
             echo ""
-            echo "--- 6. Common Failure Causes ---"
-            echo "  - AWS Service Quota: GPU instances require explicit quota (default is 0)"
-            echo "  - Capacity: GPU instances have limited availability in some AZs"
-            echo "  - IAM: Node role must have EC2_LINUX access entry in EKS"
-            echo "  - Network: Subnets must have internet access for node bootstrap"
+            echo "On-Demand G and VT instances (L-DB2E81BA):"
+            aws service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA --region $AWS_REGION 2>/dev/null | jq -r '"  Current quota: \(.Quota.Value) vCPUs"' || echo "  Could not retrieve quota"
             echo ""
-            echo "--- 7. EKS Access Entries (verify node role is listed) ---"
+            echo "Spot G and VT instances (L-3819A6DF):"
+            aws service-quotas get-service-quota --service-code ec2 --quota-code L-3819A6DF --region $AWS_REGION 2>/dev/null | jq -r '"  Current quota: \(.Quota.Value) vCPUs"' || echo "  Could not retrieve quota"
+            echo ""
+            echo "--- 6. EKS Access Entries ---"
             CLUSTER_NAME=$(jq -r .cluster_name.value tf-outputs.json)
-            aws eks list-access-entries --cluster-name $CLUSTER_NAME --region $AWS_REGION 2>/dev/null || true
+            aws eks list-access-entries --cluster-name "$CLUSTER_NAME" --region "$AWS_REGION" 2>/dev/null || true
+            echo ""
+            echo "--- 7. Common Failure Causes ---"
+            echo "  - AWS Service Quota: GPU instances (g4dn, g5) have DEFAULT QUOTA OF 0 vCPUs"
+            echo "    -> Request quota increase: https://console.aws.amazon.com/servicequotas/home/services/ec2/quotas"
+            echo "  - Spot Capacity: GPU spot instances often unavailable"
+            echo "    -> Try on-demand only in NodePool requirements"
+            echo "  - IAM: Node role must have EC2_LINUX access entry in EKS"
+            echo "  - Network: Subnets must have internet access (NAT Gateway) for node bootstrap"
+            echo "  - AMI: EKS GPU AMI must be available in region"
           fi
         continue-on-error: true
 
       - name: Wait for GPU Test Job Completion
         if: ${{ github.event.inputs.action == 'deploy-and-destroy' }}
         run: |
+          # Skip if GPU test was skipped due to quota
+          if [ "$SKIP_GPU_TEST" = "true" ]; then
+            echo "Skipping GPU job wait - GPU test was skipped due to insufficient quota"
+            exit 0
+          fi
+
           echo "Waiting for GPU test job completion (timeout: 300s)..."
-          
+
           # Give it more time - GPU node startup can be slow
           if kubectl wait --for=condition=complete --timeout=300s job/gpu-test-job -n default 2>/dev/null; then
-            echo "✅ GPU test job completed successfully!"
+            echo "GPU test job completed successfully!"
             echo ""
             echo "=== GPU Job Output ==="
             kubectl logs job/gpu-test-job -n default
             kubectl logs job/gpu-test-job -n default > gpu-job-logs.txt
           else
-            echo "⚠️ GPU test job did not complete"
+            echo "GPU test job did not complete"
             echo ""
             echo "=== Job Status ==="
             kubectl describe job/gpu-test-job -n default 2>/dev/null || true
@@ -445,29 +524,32 @@ jobs:
 
       - name: Wait for Job Completion
         if: ${{ github.event.inputs.action == 'deploy-and-destroy' }}
+        env:
+          JOB_NAME: ${{ github.event.inputs.job_name }}
+          JOB_NAMESPACE: ${{ github.event.inputs.job_namespace }}
         run: |
-          echo "Waiting for job ${{ github.event.inputs.job_name }} in namespace ${{ github.event.inputs.job_namespace }}..."
-          
+          echo "Waiting for job ${JOB_NAME} in namespace ${JOB_NAMESPACE}..."
+
           # Check if job exists first
-          if ! kubectl get job ${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} 2>/dev/null; then
-            echo "⚠️ Job ${{ github.event.inputs.job_name }} not found in namespace ${{ github.event.inputs.job_namespace }}"
+          if ! kubectl get job "${JOB_NAME}" -n "${JOB_NAMESPACE}" 2>/dev/null; then
+            echo "Job ${JOB_NAME} not found in namespace ${JOB_NAMESPACE}"
             echo "Available jobs:"
-            kubectl get jobs -n ${{ github.event.inputs.job_namespace }} || true
+            kubectl get jobs -n "${JOB_NAMESPACE}" || true
             echo "Job not found" > job-logs.txt
             exit 0
           fi
-          
+
           # Wait for job completion
-          if kubectl wait --for=condition=complete --timeout=300s job/${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} 2>/dev/null; then
-            echo "✅ Job completed successfully!"
-            kubectl logs job/${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} > job-logs.txt || echo "No logs found" > job-logs.txt
+          if kubectl wait --for=condition=complete --timeout=300s "job/${JOB_NAME}" -n "${JOB_NAMESPACE}" 2>/dev/null; then
+            echo "Job completed successfully!"
+            kubectl logs "job/${JOB_NAME}" -n "${JOB_NAMESPACE}" > job-logs.txt || echo "No logs found" > job-logs.txt
           else
-            echo "⚠️ Job did not complete within timeout or failed"
+            echo "Job did not complete within timeout or failed"
             echo "Job status:"
-            kubectl describe job ${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} || true
+            kubectl describe job "${JOB_NAME}" -n "${JOB_NAMESPACE}" || true
             echo "Pod status:"
-            kubectl get pods -n ${{ github.event.inputs.job_namespace }} -l job-name=${{ github.event.inputs.job_name }} -o wide || true
-            kubectl logs job/${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} > job-logs.txt 2>/dev/null || echo "No logs found" > job-logs.txt
+            kubectl get pods -n "${JOB_NAMESPACE}" -l "job-name=${JOB_NAME}" -o wide || true
+            kubectl logs "job/${JOB_NAME}" -n "${JOB_NAMESPACE}" > job-logs.txt 2>/dev/null || echo "No logs found" > job-logs.txt
           fi
         continue-on-error: true
 
@@ -485,42 +567,49 @@ jobs:
 
       - name: Generate Summary
         if: always()
+        env:
+          INPUT_ACTION: ${{ github.event.inputs.action }}
+          INPUT_JOB_NAME: ${{ github.event.inputs.job_name }}
+          INPUT_JOB_NAMESPACE: ${{ github.event.inputs.job_namespace }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "# 🚀 CI/CD Deployment Summary" > summary.md
+          echo "# CI/CD Deployment Summary" > summary.md
           echo "" >> summary.md
           echo "**Generated:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> summary.md
           echo "" >> summary.md
-          
+
           # Workflow Information
-          echo "## 📋 Workflow Information" >> summary.md
+          echo "## Workflow Information" >> summary.md
           echo "" >> summary.md
           echo "| Field | Value |" >> summary.md
           echo "|-------|-------|" >> summary.md
-          echo "| **Action** | \`${{ github.event.inputs.action }}\` |" >> summary.md
-          echo "| **Workflow Status** | \`${{ job.status }}\` |" >> summary.md
-          echo "| **Job Name** | \`${{ github.event.inputs.job_name }}\` |" >> summary.md
-          echo "| **Job Namespace** | \`${{ github.event.inputs.job_namespace }}\` |" >> summary.md
-          echo "| **Run ID** | \`${{ github.run_id }}\` |" >> summary.md
-          echo "| **Commit** | \`${{ github.sha }}\` |" >> summary.md
+          echo "| **Action** | \`${INPUT_ACTION}\` |" >> summary.md
+          echo "| **Workflow Status** | \`${JOB_STATUS}\` |" >> summary.md
+          echo "| **Job Name** | \`${INPUT_JOB_NAME}\` |" >> summary.md
+          echo "| **Job Namespace** | \`${INPUT_JOB_NAMESPACE}\` |" >> summary.md
+          echo "| **Run ID** | \`${RUN_ID}\` |" >> summary.md
+          echo "| **Commit** | \`${COMMIT_SHA}\` |" >> summary.md
           echo "" >> summary.md
-          
+
           # Cluster Information
           if [ -f tf-outputs.json ]; then
-            echo "## 🎯 Cluster Information" >> summary.md
+            echo "## Cluster Information" >> summary.md
             echo "" >> summary.md
             echo "| Field | Value |" >> summary.md
             echo "|-------|-------|" >> summary.md
             echo "| **Cluster Name** | \`$(jq -r .cluster_name.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
             echo "| **Cluster Endpoint** | \`$(jq -r .cluster_endpoint.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
-            echo "| **OIDC Issuer URL** | \`$(jq -r .cluster_oidc_issuer_url.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
             echo "| **Karpenter Controller Role ARN** | \`$(jq -r .karpenter_controller_role_arn.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
             echo "| **Node Instance Profile** | \`$(jq -r .node_instance_profile_name.value tf-outputs.json 2>/dev/null || echo "N/A")\` |" >> summary.md
             echo "" >> summary.md
           fi
-          
+
           # Node Information
           if [ -f nodes.json ] && [ "$(jq '.items | length' nodes.json 2>/dev/null || echo 0)" -gt 0 ]; then
-            echo "## 🖥️ Node Information" >> summary.md
+            echo "## Node Information" >> summary.md
             echo "" >> summary.md
             echo "### Node Summary" >> summary.md
             echo "" >> summary.md
@@ -531,67 +620,49 @@ jobs:
             echo "- **Ready Nodes:** $READY_NODES" >> summary.md
             echo "- **Karpenter-Managed Nodes:** $KARPENTER_NODES" >> summary.md
             echo "" >> summary.md
-            
+
             echo "### Node Details" >> summary.md
             echo "" >> summary.md
-            echo "\`\`\`" >> summary.md
-            kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,ROLES:.metadata.labels.node-role\\.kubernetes\\.io/worker,INSTANCE-TYPE:.metadata.labels.node\\.kubernetes\\.io/instance-type,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory,KARPENTER:.metadata.labels.karpenter\\.sh/provisioner-name,AGE:.metadata.creationTimestamp 2>/dev/null || echo "Unable to retrieve node information" >> summary.md
-            echo "\`\`\`" >> summary.md
-            echo "" >> summary.md
-            
-            # Node resource utilization
-            echo "### Node Resource Utilization" >> summary.md
-            echo "" >> summary.md
-            echo "\`\`\`" >> summary.md
-            kubectl top nodes 2>/dev/null || echo "Metrics server not available" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
+            kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,INSTANCE-TYPE:.metadata.labels.node\\.kubernetes\\.io/instance-type,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory,AGE:.metadata.creationTimestamp 2>/dev/null || echo "Unable to retrieve node information" >> summary.md
+            echo '```' >> summary.md
             echo "" >> summary.md
           else
-            echo "## 🖥️ Node Information" >> summary.md
+            echo "## Node Information" >> summary.md
             echo "" >> summary.md
             echo "*No nodes found or cluster not accessible*" >> summary.md
             echo "" >> summary.md
           fi
-          
+
           # Karpenter Status
           if [ -f karpenter-pods.json ] && [ "$(jq '.items | length' karpenter-pods.json 2>/dev/null || echo 0)" -gt 0 ]; then
-            echo "## ⚡ Karpenter Status" >> summary.md
+            echo "## Karpenter Status" >> summary.md
             echo "" >> summary.md
             echo "### Karpenter Pods" >> summary.md
             echo "" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
             kubectl get pods -n karpenter -o wide 2>/dev/null || echo "Unable to retrieve Karpenter pods" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
             echo "" >> summary.md
-            
-            # NodePool Status (v1beta1 API)
-            if [ -f nodepools.json ] && [ "$(jq '.items | length' nodepools.json 2>/dev/null || echo 0)" -gt 0 ]; then
-              echo "### NodePool Configuration" >> summary.md
-              echo "" >> summary.md
-              echo "\`\`\`yaml" >> summary.md
-              kubectl get nodepools -o yaml 2>/dev/null || echo "Unable to retrieve nodepools" >> summary.md
-              echo "\`\`\`" >> summary.md
-              echo "" >> summary.md
-            fi
-            
+
             # Karpenter Events
             echo "### Karpenter Events (Last 20)" >> summary.md
             echo "" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
             kubectl get events --all-namespaces --sort-by='.lastTimestamp' | grep -i karpenter | tail -20 2>/dev/null || echo "No Karpenter events found" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
             echo "" >> summary.md
           fi
-          
+
           # Pod Information
           if [ -f pods.json ] && [ "$(jq '.items | length' pods.json 2>/dev/null || echo 0)" -gt 0 ]; then
-            echo "## 📦 Pod Information" >> summary.md
+            echo "## Pod Information" >> summary.md
             echo "" >> summary.md
             TOTAL_PODS=$(jq '.items | length' pods.json 2>/dev/null || echo 0)
             RUNNING_PODS=$(jq '[.items[] | select(.status.phase=="Running")] | length' pods.json 2>/dev/null || echo 0)
             PENDING_PODS=$(jq '[.items[] | select(.status.phase=="Pending")] | length' pods.json 2>/dev/null || echo 0)
             FAILED_PODS=$(jq '[.items[] | select(.status.phase=="Failed")] | length' pods.json 2>/dev/null || echo 0)
-            
+
             echo "### Pod Summary" >> summary.md
             echo "" >> summary.md
             echo "- **Total Pods:** $TOTAL_PODS" >> summary.md
@@ -599,62 +670,69 @@ jobs:
             echo "- **Pending:** $PENDING_PODS" >> summary.md
             echo "- **Failed:** $FAILED_PODS" >> summary.md
             echo "" >> summary.md
-            
+
             echo "### Pod Details" >> summary.md
             echo "" >> summary.md
-            echo "\`\`\`" >> summary.md
-            kubectl get pods --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,NODE:.spec.nodeName,CPU-REQ:.spec.containers[0].resources.requests.cpu,MEM-REQ:.spec.containers[0].resources.requests.memory,AGE:.metadata.creationTimestamp 2>/dev/null | head -50 || echo "Unable to retrieve pod information" >> summary.md
-            echo "\`\`\`" >> summary.md
+            echo '```' >> summary.md
+            kubectl get pods --all-namespaces -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.phase,NODE:.spec.nodeName,AGE:.metadata.creationTimestamp 2>/dev/null | head -50 || echo "Unable to retrieve pod information" >> summary.md
+            echo '```' >> summary.md
             echo "" >> summary.md
-            
+
             # Job Status
-            if [ "${{ github.event.inputs.action }}" == "deploy-and-destroy" ] || [ "${{ github.event.inputs.action }}" == "deploy" ]; then
-              echo "### Job Status: ${{ github.event.inputs.job_name }}" >> summary.md
+            if [ "$INPUT_ACTION" == "deploy-and-destroy" ] || [ "$INPUT_ACTION" == "deploy" ]; then
+              echo "### Job Status: ${INPUT_JOB_NAME}" >> summary.md
               echo "" >> summary.md
-              echo "\`\`\`" >> summary.md
-              kubectl get job ${{ github.event.inputs.job_name }} -n ${{ github.event.inputs.job_namespace }} -o wide 2>/dev/null || echo "Job not found or not accessible" >> summary.md
-              echo "\`\`\`" >> summary.md
+              echo '```' >> summary.md
+              kubectl get job "${INPUT_JOB_NAME}" -n "${INPUT_JOB_NAMESPACE}" -o wide 2>/dev/null || echo "Job not found or not accessible" >> summary.md
+              echo '```' >> summary.md
               echo "" >> summary.md
-              
+
               if [ -f job-logs.txt ]; then
                 echo "### Job Logs" >> summary.md
                 echo "" >> summary.md
-                echo "\`\`\`" >> summary.md
+                echo '```' >> summary.md
                 head -100 job-logs.txt >> summary.md
                 if [ $(wc -l < job-logs.txt) -gt 100 ]; then
                   echo "" >> summary.md
                   echo "... (truncated, see full logs in artifact)" >> summary.md
                 fi
-                echo "\`\`\`" >> summary.md
+                echo '```' >> summary.md
                 echo "" >> summary.md
               fi
             fi
           fi
-          
+
           # GPU Test Job Results
           if [ -f gpu-job-logs.txt ]; then
-            echo "## 🧪 GPU Autoscaling Test" >> summary.md
+            echo "## GPU Autoscaling Test" >> summary.md
             echo "" >> summary.md
             echo "### GPU Test Job Logs" >> summary.md
             echo "" >> summary.md
-            echo '\`\`\`' >> summary.md
+            echo '```' >> summary.md
             head -50 gpu-job-logs.txt >> summary.md
             if [ $(wc -l < gpu-job-logs.txt) -gt 50 ]; then
               echo "... (truncated, see full logs in artifact)" >> summary.md
             fi
-            echo '\`\`\`' >> summary.md
+            echo '```' >> summary.md
             echo "" >> summary.md
-            # Check for success marker
             if grep -q 'GPU test successful!' gpu-job-logs.txt; then
-              echo "**Result:** ✅ GPU node was provisioned and test ran successfully." >> summary.md
+              echo "**Result:** GPU node was provisioned and test ran successfully." >> summary.md
+            elif grep -q 'quota' gpu-job-logs.txt; then
+              echo "**Result:** GPU test SKIPPED - AWS GPU quota is 0 or insufficient." >> summary.md
+              echo "" >> summary.md
+              echo "To enable GPU testing, request a quota increase at:" >> summary.md
+              echo "https://console.aws.amazon.com/servicequotas/home/services/ec2/quotas" >> summary.md
+              echo "" >> summary.md
+              echo "Search for: **Running On-Demand G and VT instances**" >> summary.md
+              echo "Request at least **4 vCPUs** for g4dn.xlarge" >> summary.md
             else
-              echo "**Result:** ❌ GPU node was NOT provisioned or test failed." >> summary.md
+              echo "**Result:** GPU node was NOT provisioned or test failed." >> summary.md
             fi
             echo "" >> summary.md
           fi
-          
+
           # Resource Summary
-          echo "## 📊 Resource Summary" >> summary.md
+          echo "## Resource Summary" >> summary.md
           echo "" >> summary.md
           if [ -f nodes.json ] && [ "$(jq '.items | length' nodes.json 2>/dev/null || echo 0)" -gt 0 ]; then
             TOTAL_CPU=$(jq '[.items[].status.capacity.cpu] | map(tonumber? // 0) | add' nodes.json 2>/dev/null || echo 0)
@@ -664,31 +742,16 @@ jobs:
             echo "- **Total Cluster Memory:** ~${TOTAL_MEMORY_GB} GB" >> summary.md
             echo "" >> summary.md
           fi
-          
-          # Karpenter Provisioning Activity
-          if [ -f events.txt ]; then
-            echo "## 🔄 Karpenter Provisioning Activity" >> summary.md
-            echo "" >> summary.md
-            PROVISIONING_EVENTS=$(grep -i "karpenter\|provision\|launch\|node" events.txt | tail -30 || echo "")
-            if [ ! -z "$PROVISIONING_EVENTS" ]; then
-              echo "\`\`\`" >> summary.md
-              echo "$PROVISIONING_EVENTS" >> summary.md
-              echo "\`\`\`" >> summary.md
-            else
-              echo "*No provisioning events found*" >> summary.md
-            fi
-            echo "" >> summary.md
-          fi
-          
+
           # Errors and Warnings
-          echo "## ⚠️ Errors and Warnings" >> summary.md
+          echo "## Errors and Warnings" >> summary.md
           echo "" >> summary.md
           if [ -f events.txt ]; then
             ERROR_EVENTS=$(grep -i "error\|warning\|failed" events.txt | tail -20 || echo "")
             if [ ! -z "$ERROR_EVENTS" ]; then
-              echo "\`\`\`" >> summary.md
+              echo '```' >> summary.md
               echo "$ERROR_EVENTS" >> summary.md
-              echo "\`\`\`" >> summary.md
+              echo '```' >> summary.md
             else
               echo "*No errors or warnings found*" >> summary.md
             fi
@@ -696,11 +759,11 @@ jobs:
             echo "*Unable to retrieve events*" >> summary.md
           fi
           echo "" >> summary.md
-          
+
           # Footer
           echo "---" >> summary.md
           echo "" >> summary.md
-          echo "**Workflow Run:** [View on GitHub](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> summary.md
+          echo "**Workflow Run:** [View on GitHub](https://github.com/${REPO}/actions/runs/${RUN_ID})" >> summary.md
           echo "" >> summary.md
           echo "*This summary was automatically generated by the CI/CD workflow.*" >> summary.md
         shell: bash
@@ -726,7 +789,6 @@ jobs:
             karpenter-pods.json
             events.txt
             job-logs.txt
-            tf-outputs.json
           retention-days: 7
 
       - name: Pre-destroy Cleanup (Terminate Karpenter Instances)

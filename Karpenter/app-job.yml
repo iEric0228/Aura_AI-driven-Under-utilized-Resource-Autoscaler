@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
       - name: pi
-        image: perl
+        image: perl:5.40-slim
         command: ["perl",  "-Mbignum=bpi", "-wle", "print bpi(2000)"]
         resources:
           requests:

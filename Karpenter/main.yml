@@ -4,18 +4,17 @@
 #   - CLUSTER_NAME: The EKS cluster name for discovery tags
 ---
 # EC2NodeClass defines the AWS-specific configuration for nodes
-# This replaces the provider block from v1alpha5 Provisioner
 apiVersion: karpenter.k8s.aws/v1beta1
 kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  amiFamily: AL2
-  # Use instanceProfile instead of role - role requires Karpenter to have IAM permissions to create instance profiles
+  amiFamily: AL2023
   instanceProfile: ${INSTANCE_PROFILE}
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: ${CLUSTER_NAME}
+        kubernetes.io/role/internal-elb: "1"
   securityGroupSelectorTerms:
     - tags:
         karpenter.sh/discovery: ${CLUSTER_NAME}
@@ -29,11 +28,12 @@ kind: EC2NodeClass
 metadata:
   name: gpu
 spec:
-  amiFamily: AL2  # AL2 GPU AMI will be auto-selected for GPU instances
+  amiFamily: AL2023
   instanceProfile: ${INSTANCE_PROFILE}
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: ${CLUSTER_NAME}
+        kubernetes.io/role/internal-elb: "1"
   securityGroupSelectorTerms:
     - tags:
         karpenter.sh/discovery: ${CLUSTER_NAME}
@@ -57,19 +57,22 @@ spec:
       requirements:
         - key: "node.kubernetes.io/instance-type"
           operator: In
-          values: ["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge"]
+          values: ["t3.medium", "t3.large", "t3.xlarge", "m5.large", "m5.xlarge", "m6i.large", "m6i.xlarge"]
         - key: "karpenter.sh/capacity-type"
           operator: In
           values: ["on-demand", "spot"]
         - key: "kubernetes.io/arch"
           operator: In
           values: ["amd64"]
+      expireAfter: 720h
   limits:
     cpu: 100
     memory: 200Gi
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 60s
+    budgets:
+      - nodes: "10%"
 ---
 # GPU NodePool for NVIDIA GPU workloads
 apiVersion: karpenter.sh/v1beta1
@@ -96,10 +99,11 @@ spec:
           values: ["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge", "g5.2xlarge"]
         - key: "karpenter.sh/capacity-type"
           operator: In
-          values: ["on-demand", "spot"]
+          values: ["on-demand"]
         - key: "kubernetes.io/arch"
           operator: In
           values: ["amd64"]
+      expireAfter: 720h
   limits:
     cpu: 32
     memory: 128Gi
@@ -107,3 +111,5 @@ spec:
   disruption:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 60s
+    budgets:
+      - nodes: "10%"

@@ -89,6 +89,8 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+tf-outputs.json
+**/tf-outputs.json
 
 # Keep terraform.tfvars in dev for local development
 # but exclude production secrets

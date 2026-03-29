@@ -4,15 +4,16 @@ import json
 import ssl
 import hashlib
 from urllib.parse import urlparse
-import socket
+
 
 def get_thumbprint(oidc_url):
     parsed = urlparse(oidc_url)
     host = parsed.netloc
     port = 443
-    cert = ssl.get_server_certificate((host, port))
+    context = ssl.create_default_context()
+    cert = ssl.get_server_certificate((host, port), timeout=10)
     x509 = ssl.PEM_cert_to_DER_cert(cert)
-    thumbprint = hashlib.sha1(x509).hexdigest()
+    thumbprint = hashlib.sha256(x509).hexdigest()
     return thumbprint
 
 

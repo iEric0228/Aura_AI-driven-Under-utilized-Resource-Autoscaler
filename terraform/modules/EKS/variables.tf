@@ -3,6 +3,12 @@ variable "cluster_name" {
   type        = string
 }
 
+variable "kubernetes_version" {
+  description = "Kubernetes version for the EKS cluster"
+  type        = string
+  default     = "1.31"
+}
+
 variable "cluster_role_arn" {
   description = "The ARN of the IAM role to associate with the EKS cluster"
   type        = string
@@ -57,4 +63,16 @@ variable "local_admin_principal_arn" {
   description = "Optional: ARN of your IAM user/role for local kubectl access (leave empty to disable)"
   type        = string
   default     = ""
+}
+
+variable "endpoint_public_access_cidrs" {
+  description = "List of CIDR blocks allowed to access the EKS API server publicly"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "cluster_log_types" {
+  description = "EKS control plane log types to enable"
+  type        = list(string)
+  default     = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
 }

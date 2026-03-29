@@ -216,10 +216,10 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       read -p "Karpenter may need reconfiguration. Upgrade Karpenter with correct settings? (y/N): " UPGRADE_KARPENTER
       if [[ "$UPGRADE_KARPENTER" =~ ^[Yy]$ ]]; then
         echo ""
-        echo ">>> Upgrading Karpenter v0.37.0 with correct settings..."
+        echo ">>> Upgrading Karpenter v${KARPENTER_VERSION:-0.37.0} with correct settings..."
         helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
           --namespace karpenter \
-          --version 0.37.0 \
+          --version "${KARPENTER_VERSION:-0.37.0}" \
           --set "settings.clusterName=$CLUSTER_NAME" \
           --set "settings.clusterEndpoint=$CLUSTER_ENDPOINT" \
           --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
@@ -255,7 +255,7 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
     read -p "Install Karpenter now? (y/N): " INSTALL_KARPENTER
     if [[ "$INSTALL_KARPENTER" =~ ^[Yy]$ ]]; then
       echo ""
-      echo ">>> Installing Karpenter v0.37.0 with settings:"
+      echo ">>> Installing Karpenter v${KARPENTER_VERSION:-0.37.0} with settings:"
       echo "    Cluster Name: $CLUSTER_NAME"
       echo "    Cluster Endpoint: $CLUSTER_ENDPOINT"
       echo "    IAM Role ARN: $KARPENTER_ROLE_ARN"
@@ -263,7 +263,7 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
       # Use OCI registry (charts.karpenter.sh is deprecated)
       helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
         --namespace karpenter --create-namespace \
-        --version 0.37.0 \
+        --version "${KARPENTER_VERSION:-0.37.0}" \
         --set "settings.clusterName=$CLUSTER_NAME" \
         --set "settings.clusterEndpoint=$CLUSTER_ENDPOINT" \
         --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$KARPENTER_ROLE_ARN" \
@@ -336,7 +336,7 @@ spec:
     spec:
       containers:
       - name: busybox
-        image: busybox
+        image: busybox:1.36
         command: ["sh", "-c", "echo 'CPU test started'; sleep 30; echo 'CPU test successful!'"]
         resources:
           requests:
