@@ -18,6 +18,7 @@ jobs:
           - terraform/modules/EKS
           - terraform/modules/IAM
           - terraform/modules/IAM_EKS
+          - terraform/environments/dev
 
     steps:
       - uses: actions/checkout@v4

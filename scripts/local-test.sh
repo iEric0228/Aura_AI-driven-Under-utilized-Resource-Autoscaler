@@ -248,7 +248,7 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
         echo ">>> Waiting for Karpenter to be ready (up to 60s)..."
         sleep 10
         for i in {1..5}; do
-          # v0.27.5 has a single container per pod
+          # Karpenter runs a single controller pod; check its phase
           READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
           if [ "$READY" = "Running" ]; then
             echo "✅ Karpenter is now ready!"
