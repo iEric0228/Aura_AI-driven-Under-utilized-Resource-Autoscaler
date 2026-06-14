@@ -74,7 +74,7 @@ Aura_AI-driven-Under-utilized-Resource-Autoscaler/
 │   └── app-job.yml                 # Example Kubernetes Job
 ├── .github/
 │   └── workflows/
-│       └── cd-cd.yml               # CI/CD pipeline
+│       └── ci-cd.yml               # CI/CD pipeline
 └── env.example                     # Environment variables template
 ```
 
@@ -183,7 +183,7 @@ Aura_AI-driven-Under-utilized-Resource-Autoscaler/
 
 ---
 
-### 3.7 CI/CD Workflow (`.github/workflows/cd-cd.yml`)
+### 3.7 CI/CD Workflow (`.github/workflows/ci-cd.yml`)
 
 **Purpose:** Fully automated deployment and teardown pipeline
 
@@ -616,7 +616,7 @@ This is a **fully automated, ephemeral Kubernetes infrastructure system** that u
 | `terraform/modules/IAM_EKS/main.tf` | EKS cluster/node IAM roles |
 | `Karpenter/main.yml` | Karpenter Provisioner CRD (defines scaling behavior) |
 | `Karpenter/app-job.yml` | Example Kubernetes Job manifest |
-| `.github/workflows/cd-cd.yml` | CI/CD pipeline (deploy → run → destroy) |
+| `.github/workflows/ci-cd.yml` | CI/CD pipeline (deploy → run → destroy) |
 | `terraform/environments/dev/get-oidc-thumbprint.py` | Helper script for OIDC provider setup |
 
 ---
