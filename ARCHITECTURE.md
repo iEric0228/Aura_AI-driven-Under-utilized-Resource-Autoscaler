@@ -432,8 +432,8 @@ GitHub Actions Workflow Trigger
    
 3. Terraform provisions infrastructure (~5-8 minutes)
    ├─ VPC created (10.0.0.0/16)
-   ├─ Subnets created (public: 10.0.1.0/24, 10.0.2.0/24)
-   │                    (private: 10.0.3.0/24, 10.0.4.0/24)
+   ├─ Subnets created (public: 10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24)
+   │                    (private: 10.0.16.0/20, 10.0.32.0/20, 10.0.48.0/20)
    ├─ NAT Gateway created (for private subnet internet access)
    ├─ IAM roles created (cluster, node, Karpenter)
    ├─ EKS cluster created (aura-eks-dev)
