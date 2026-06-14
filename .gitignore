@@ -74,7 +74,10 @@ credentials
 
 # Terraform
 .terraform/
+# Ignore module-level provider locks, but commit the root (environment) lock
+# so provider versions are reproducible across CI and contributors.
 .terraform.lock.hcl
+!terraform/environments/*/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfstate.backup
