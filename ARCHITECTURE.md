@@ -428,7 +428,7 @@ GitHub Actions Workflow Trigger
    
 2. GitHub Actions authenticates to AWS
    - Uses OIDC token (no AWS credentials stored)
-   - Assumes role: arn:aws:iam::125156866057:role/github-OICD
+   - Assumes role: arn:aws:iam::<ACCOUNT_ID>:role/<OIDC_ROLE_NAME>
    
 3. Terraform provisions infrastructure (~5-8 minutes)
    ├─ VPC created (10.0.0.0/16)

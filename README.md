@@ -267,7 +267,12 @@ Or manually:
 
 ```bash
 cd terraform/environments/dev
-terraform init
+
+# The S3 backend is a partial config; supply the account-specific bucket at init.
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+terraform init \
+  -backend-config="bucket=aura-terraform-state-${ACCOUNT_ID}" \
+  -backend-config="dynamodb_table=aura-terraform-locks"
 terraform apply
 
 # Configure kubectl

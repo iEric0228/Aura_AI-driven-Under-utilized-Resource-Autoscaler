@@ -8,15 +8,15 @@ terraform {
     }
   }
 
-  # Remote backend for CI/CD state persistence
-  # The S3 bucket and DynamoDB table must be created beforehand
-  # Note: backend config cannot use variables; update bucket name if account changes
+  # Remote backend for CI/CD state persistence (S3 + DynamoDB locking).
+  # Partial config: bucket and dynamodb_table are supplied at init time via
+  # -backend-config so the account-specific bucket name isn't hardcoded and the
+  # repo is portable across AWS accounts. scripts/bootstrap-backend.sh creates
+  # these resources and prints the exact `terraform init` command to use.
   backend "s3" {
-    bucket         = "aura-terraform-state-125156866057"
-    key            = "dev/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "aura-terraform-locks"
+    key     = "dev/terraform.tfstate"
+    region  = "us-east-1"
+    encrypt = true
   }
 }
 
