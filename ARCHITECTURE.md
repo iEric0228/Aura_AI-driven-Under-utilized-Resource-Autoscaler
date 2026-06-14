@@ -74,7 +74,7 @@ Aura_AI-driven-Under-utilized-Resource-Autoscaler/
 │   └── app-job.yml                 # Example Kubernetes Job
 ├── .github/
 │   └── workflows/
-│       └── cd-cd.yml               # CI/CD pipeline
+│       └── ci-cd.yml               # CI/CD pipeline
 └── env.example                     # Environment variables template
 ```
 
@@ -183,7 +183,7 @@ Aura_AI-driven-Under-utilized-Resource-Autoscaler/
 
 ---
 
-### 3.7 CI/CD Workflow (`.github/workflows/cd-cd.yml`)
+### 3.7 CI/CD Workflow (`.github/workflows/ci-cd.yml`)
 
 **Purpose:** Fully automated deployment and teardown pipeline
 
@@ -428,12 +428,12 @@ GitHub Actions Workflow Trigger
    
 2. GitHub Actions authenticates to AWS
    - Uses OIDC token (no AWS credentials stored)
-   - Assumes role: arn:aws:iam::125156866057:role/github-OICD
+   - Assumes role: arn:aws:iam::<ACCOUNT_ID>:role/<OIDC_ROLE_NAME>
    
 3. Terraform provisions infrastructure (~5-8 minutes)
    ├─ VPC created (10.0.0.0/16)
-   ├─ Subnets created (public: 10.0.1.0/24, 10.0.2.0/24)
-   │                    (private: 10.0.3.0/24, 10.0.4.0/24)
+   ├─ Subnets created (public: 10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24)
+   │                    (private: 10.0.16.0/20, 10.0.32.0/20, 10.0.48.0/20)
    ├─ NAT Gateway created (for private subnet internet access)
    ├─ IAM roles created (cluster, node, Karpenter)
    ├─ EKS cluster created (aura-eks-dev)
@@ -616,7 +616,7 @@ This is a **fully automated, ephemeral Kubernetes infrastructure system** that u
 | `terraform/modules/IAM_EKS/main.tf` | EKS cluster/node IAM roles |
 | `Karpenter/main.yml` | Karpenter Provisioner CRD (defines scaling behavior) |
 | `Karpenter/app-job.yml` | Example Kubernetes Job manifest |
-| `.github/workflows/cd-cd.yml` | CI/CD pipeline (deploy → run → destroy) |
+| `.github/workflows/ci-cd.yml` | CI/CD pipeline (deploy → run → destroy) |
 | `terraform/environments/dev/get-oidc-thumbprint.py` | Helper script for OIDC provider setup |
 
 ---

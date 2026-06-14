@@ -2,7 +2,7 @@
 
 Ephemeral AWS EKS infrastructure + Karpenter autoscaling for cost-efficient batch/AI workloads.
 
-[![Deploy Status](https://github.com/iEric0228/Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/cd-cd.yml/badge.svg)](https://github.com/iEric0228/Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/cd-cd.yml)
+[![Deploy Status](https://github.com/iEric0228/Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/iEric0228/Aura_AI-driven-Under-utilized-Resource-Autoscaler/actions/workflows/ci-cd.yml)
 [![AWS](https://img.shields.io/badge/AWS-FF9900?style=flat-square&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
 [![Terraform](https://img.shields.io/badge/Terraform-623CE4?style=flat-square&logo=terraform&logoColor=white)](https://terraform.io/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
@@ -11,7 +11,7 @@ Ephemeral AWS EKS infrastructure + Karpenter autoscaling for cost-efficient batc
 ## Documentation
 
 - **Deep dive**: `ARCHITECTURE.md` (detailed module-by-module explanation, flows, and tradeoffs)
-- **CI/CD workflow**: `.github/workflows/cd-cd.yml`
+- **CI/CD workflow**: `.github/workflows/ci-cd.yml`
 
 ---
 
@@ -93,7 +93,7 @@ Aura_AI-driven-Under-utilized-Resource-Autoscaler/
 │   └── local-test.sh                  # Local validation & testing
 ├── .github/
 │   └── workflows/
-│       └── cd-cd.yml                  # CI/CD pipeline
+│       └── ci-cd.yml                  # CI/CD pipeline
 └── env.example                        # Environment variables template
 ```
 
@@ -244,7 +244,7 @@ The CI/CD workflow automatically checks GPU quotas and skips the GPU test if ins
 
 ### Run via CI/CD (recommended)
 
-Trigger the workflow `.github/workflows/cd-cd.yml` via **Actions > Run workflow** with:
+Trigger the workflow `.github/workflows/ci-cd.yml` via **Actions > Run workflow** with:
 - `deploy-and-destroy` — create infra, run jobs, destroy (default)
 - `deploy` — create infra only (leaves cluster running)
 - `destroy` — destroy existing infra only
@@ -267,7 +267,12 @@ Or manually:
 
 ```bash
 cd terraform/environments/dev
-terraform init
+
+# The S3 backend is a partial config; supply the account-specific bucket at init.
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+terraform init \
+  -backend-config="bucket=aura-terraform-state-${ACCOUNT_ID}" \
+  -backend-config="dynamodb_table=aura-terraform-locks"
 terraform apply
 
 # Configure kubectl
@@ -338,7 +343,7 @@ aws iam create-service-linked-role --aws-service-name spot.amazonaws.com
 | `Karpenter/nvidia-device-plugin.yml` | Vendored NVIDIA device plugin DaemonSet (v0.14.1) |
 | `Karpenter/app-job.yml` | Example CPU Job manifest |
 | `Karpenter/gpu-test-job.yml` | GPU test Job manifest (nvidia-smi) |
-| `.github/workflows/cd-cd.yml` | CI/CD pipeline (deploy, run, collect, destroy) |
+| `.github/workflows/ci-cd.yml` | CI/CD pipeline (deploy, run, collect, destroy) |
 | `scripts/bootstrap-backend.sh` | One-time S3 + DynamoDB backend setup |
 | `scripts/local-test.sh` | Local validation and testing script |
 

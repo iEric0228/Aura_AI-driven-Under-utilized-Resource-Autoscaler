@@ -58,11 +58,24 @@ echo "Working directory: $TF_DIR"
 echo "Options: AUTO_DESTROY=$AUTO_DESTROY, PLAN_ONLY=$PLAN_ONLY, DESTROY_ONLY=$DESTROY_ONLY"
 cd "$TF_DIR"
 
+# Partial backend config: the state bucket name includes the AWS account ID and
+# is supplied at init time rather than hardcoded in main.tf.
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)"
+if [ -z "${ACCOUNT_ID:-}" ]; then
+  echo "ERROR: AWS credentials not configured (required for the S3 backend)."
+  echo "Run 'aws sso login' or 'aws configure', then re-run this script."
+  exit 1
+fi
+TF_BACKEND_ARGS=(
+  -backend-config="bucket=aura-terraform-state-${ACCOUNT_ID}"
+  -backend-config="dynamodb_table=aura-terraform-locks"
+)
+
 # 1. Handle destroy-only mode
 if [ "$DESTROY_ONLY" = true ]; then
   echo ""
   echo ">>> Running terraform init..."
-  terraform init
+  terraform init "${TF_BACKEND_ARGS[@]}"
   echo ""
   echo ">>> Running terraform destroy (destroy-only mode)..."
   terraform destroy -auto-approve
@@ -73,7 +86,7 @@ fi
 # 2. Terraform Init
 echo ""
 echo ">>> Running terraform init..."
-terraform init
+terraform init "${TF_BACKEND_ARGS[@]}"
 
 # 3. Terraform Validate
 echo ""
@@ -235,7 +248,7 @@ if [ "$SKIP_KUBECTL" = false ] && command -v helm &> /dev/null; then
         echo ">>> Waiting for Karpenter to be ready (up to 60s)..."
         sleep 10
         for i in {1..5}; do
-          # v0.27.5 has a single container per pod
+          # Karpenter runs a single controller pod; check its phase
           READY=$(kubectl get pods -n karpenter -l app.kubernetes.io/name=karpenter -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
           if [ "$READY" = "Running" ]; then
             echo "✅ Karpenter is now ready!"

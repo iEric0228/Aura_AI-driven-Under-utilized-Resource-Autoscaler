@@ -23,6 +23,23 @@ resource "aws_eks_cluster" "this" {
   ]
 }
 
+# Enable VPC CNI network policy enforcement so the NetworkPolicy manifests
+# (default-deny ingress + EC2 metadata endpoint block in Karpenter/network-policy.yml)
+# are actually enforced. The EKS default CNI silently ignores NetworkPolicies
+# unless network policy support is turned on via the vpc-cni addon.
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "vpc-cni"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  configuration_values = jsonencode({
+    enableNetworkPolicy = "true"
+  })
+
+  depends_on = [aws_eks_node_group.this]
+}
+
 # Tag the cluster security group so Karpenter can discover it
 resource "aws_ec2_tag" "cluster_security_group" {
   resource_id = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id

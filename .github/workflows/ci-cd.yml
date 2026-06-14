@@ -118,7 +118,11 @@ jobs:
 
       - name: Terraform Init
         working-directory: ./terraform/environments/dev
-        run: terraform init -reconfigure
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform init -reconfigure \
+            -backend-config="bucket=aura-terraform-state-${ACCOUNT_ID}" \
+            -backend-config="dynamodb_table=aura-terraform-locks"
 
       - name: Proactively Import Existing IAM Roles and Policies
         if: ${{ github.event.inputs.action != 'destroy' }}

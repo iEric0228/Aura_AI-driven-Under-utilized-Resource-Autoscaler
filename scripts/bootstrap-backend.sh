@@ -89,17 +89,13 @@ fi
 echo ""
 echo "=== Bootstrap Complete ==="
 echo ""
-echo "Your Terraform backend is ready. Update your main.tf with:"
+echo "Your Terraform backend is ready. The backend block in main.tf is a partial"
+echo "config, so supply the account-specific bucket and lock table at init time:"
 echo ""
-echo '  backend "s3" {'
-echo "    bucket         = \"$BUCKET_NAME\""
-echo '    key            = "dev/terraform.tfstate"'
-echo "    region         = \"$AWS_REGION\""
-echo '    encrypt        = true'
-echo "    dynamodb_table = \"$DYNAMODB_TABLE\""
-echo '  }'
-echo ""
-echo "Then run:"
 echo "  cd terraform/environments/dev"
-echo "  terraform init -migrate-state  # To migrate existing local state to S3"
+echo "  terraform init \\"
+echo "    -backend-config=\"bucket=$BUCKET_NAME\" \\"
+echo "    -backend-config=\"dynamodb_table=$DYNAMODB_TABLE\""
+echo ""
+echo "(Add -migrate-state the first time if you are moving existing local state.)"
 echo ""
