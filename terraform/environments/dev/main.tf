@@ -127,6 +127,10 @@ locals {
           "ssm:GetParametersByPath",
           "eks:DescribeCluster",
         ]
+        # EC2 Describe* and SSM parameter reads do not support resource-level
+        # permissions. DeleteLaunchTemplate could be narrowed further with a
+        # StringEquals condition on the karpenter.k8s.aws/cluster tag if the
+        # blast radius ever needs shrinking; templates here are Karpenter-owned.
         Resource = "*"
       },
       {

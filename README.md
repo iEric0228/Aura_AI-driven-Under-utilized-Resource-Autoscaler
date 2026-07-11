@@ -224,6 +224,21 @@ The CI/CD workflow automatically checks GPU quotas and skips the GPU test if ins
 - Single-region by default (configurable via variables)
 - GPU Spot instances disabled by default due to high interruption rates
 
+### Cost profile
+
+The point of the design: **cost accrues per run, not per month.**
+
+| State | What bills | ~Rate |
+|-------|-----------|-------|
+| Between runs | nothing — the whole stack is destroyed | $0 |
+| Stack up, idle | EKS control plane + NAT | ~$0.15/hr |
+| GPU job running | + `g5.xlarge` node(s), Karpenter-provisioned on demand | ~$1.01/hr each |
+
+Karpenter consolidation (60s window) and node expiry keep GPU nodes from
+outliving their workload; the pipeline's final stage destroys everything else.
+Leaving a `g5.xlarge` idle around the clock would cost ~$725/mo — the
+scale-to-zero design exists so that number never appears on a bill.
+
 ---
 
 ## 9. Quickstart
